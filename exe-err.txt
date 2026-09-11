@@ -1,0 +1,4 @@
+﻿
+[DB] 鍒濆鍖栧畬鎴? C:\Users\rihao\AppData\Roaming\aigei-downloader\aigei-downloader.db
+(node:4824) electron: Failed to load URL: file:///C:/Users/rihao/Projects/imageye-zh/aigei-downloader/dist-build/win-unpacked/resources/app.asar/dist/renderer/index.html with error: ERR_FILE_NOT_FOUND
+(Use `AigeiDownloader --trace-warnings ...` to show where the warning was created)

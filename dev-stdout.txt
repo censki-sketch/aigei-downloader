@@ -1,0 +1,31 @@
+vite v5.4.21 building SSR bundle for development...
+transforming...
+✓ 10 modules transformed.
+rendering chunks...
+dist/main/index.js  28.40 kB
+✓ built in 127ms
+
+build the electron main process successfully
+
+-----
+
+vite v5.4.21 building SSR bundle for development...
+transforming...
+✓ 1 modules transformed.
+rendering chunks...
+dist/preload/index.js  1.91 kB
+✓ built in 9ms
+
+build the electron preload files successfully
+
+-----
+
+Port 5173 is in use, trying another one...
+dev server running for the electron renderer process at:
+
+  ➜  Local:   http://localhost:5174/
+  ➜  Network: use --host to expose
+
+start electron app...
+
+

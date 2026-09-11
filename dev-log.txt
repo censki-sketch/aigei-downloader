@@ -1,0 +1,31 @@
+vite v5.4.21 building SSR bundle for development...
+transforming...
+✓ 11 modules transformed.
+rendering chunks...
+dist/main/index.js  27.63 kB
+✓ built in 139ms
+
+build the electron main process successfully
+
+-----
+
+vite v5.4.21 building SSR bundle for development...
+transforming...
+✓ 1 modules transformed.
+rendering chunks...
+dist/preload/index.js  2.28 kB
+✓ built in 17ms
+
+build the electron preload files successfully
+
+-----
+
+dev server running for the electron renderer process at:
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+
+start electron app...
+
+
+[DB] 初始化完成: C:\Users\rihao\AppData\Roaming\aigei-downloader\aigei-downloader.db
