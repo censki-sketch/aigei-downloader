@@ -1,8 +1,8 @@
-import { createWriteStream, existsSync, mkdirSync, statSync, renameSync } from 'fs'
-import { join } from 'path'
+import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readSync, statSync, renameSync, unlinkSync } from 'fs'
+import { dirname, join } from 'path'
 import { app } from 'electron'
 import { getCookieString } from './browser.js'
-import { scrapeItemPage } from './scraper.js'
+import { isAigeiBlockedContent, scrapeItemPage } from './scraper.js'
 import { dfu, cqbj, cupie, decryptResponse } from './aigei-encrypt.js'
 
 export interface DownloadResult {
@@ -10,6 +10,7 @@ export interface DownloadResult {
   filePath?: string
   error?: string
   fileSize?: number
+  retryable?: boolean
 }
 
 export function getDefaultSaveDir(): string {
@@ -22,7 +23,7 @@ export function getDefaultSaveDir(): string {
 export async function downloadItem(
   itemUrl: string,
   title: string,
-  saveDir: string,
+  archivePath: string,
   onProgress?: (downloaded: number, total: number, speed: number) => void
 ): Promise<DownloadResult> {
   const cookieString = await getCookieString()
@@ -77,13 +78,15 @@ export async function downloadItem(
     }
 
     // 5. 下载文件（带进度 + 断点续传）
-    const safeTitle = sanitizeFileName(title || itemId)
-    const savePath = join(saveDir, `${safeTitle}.zip`)
+    const savePath = archivePath
     const tempPath = `${savePath}.tmp`
-    mkdirSync(saveDir, { recursive: true })
+    mkdirSync(dirname(savePath), { recursive: true })
 
     let resumeFrom = 0
-    if (existsSync(tempPath)) resumeFrom = statSync(tempPath).size
+    if (existsSync(tempPath)) {
+      if (isZipFile(tempPath)) resumeFrom = statSync(tempPath).size
+      else unlinkSync(tempPath)
+    }
 
     const dlHeaders: Record<string, string> = {
       Referer: 'https://www.aigei.com/',
@@ -92,19 +95,48 @@ export async function downloadItem(
     }
     if (resumeFrom > 0) dlHeaders['Range'] = `bytes=${resumeFrom}-`
 
-    const dlResp = await fetch(downloadUrl, { headers: dlHeaders })
+    let dlResp = await fetch(downloadUrl, { headers: dlHeaders })
     if (!dlResp.ok && dlResp.status !== 206 && dlResp.status !== 200) {
       throw new Error(`下载失败: HTTP ${dlResp.status}`)
     }
+    if (resumeFrom > 0 && dlResp.status === 200) {
+      resumeFrom = 0
+      dlResp = await fetch(downloadUrl, {
+        headers: {
+          Referer: 'https://www.aigei.com/',
+          'User-Agent': ua,
+          Cookie: cookieString
+        }
+      })
+    }
+
+    const contentType = dlResp.headers.get('content-type') || ''
+    if (/text\/html|application\/json|text\/plain/i.test(contentType)) {
+      const body = await dlResp.text()
+      if (isAigeiBlockedContent(dlResp.url, body)) {
+        throw new Error('爱给网要求验证或已限制访问频率，下载队列已暂停')
+      }
+      throw new Error('下载接口返回了网页而不是 ZIP 文件，请重新登录后再试')
+    }
 
     const totalBytes = Number(dlResp.headers.get('content-length') || 0) + resumeFrom
+    const reader = dlResp.body?.getReader()
+    if (!reader) throw new Error('无法读取下载流')
+
+    const initialChunks = resumeFrom > 0 ? [] : await readZipPrefix(reader)
+    if (resumeFrom === 0 && !isZipHeader(Buffer.concat(initialChunks.map((chunk) => Buffer.from(chunk))))) {
+      await reader.cancel()
+      throw new Error('下载内容不是有效的 ZIP 文件，可能是登录失效、验证页或访问频率受限')
+    }
+
     const fileStream = createWriteStream(tempPath, { flags: resumeFrom > 0 ? 'a' : 'w' })
     let downloadedBytes = resumeFrom
     let lastTime = Date.now()
     let lastBytes = downloadedBytes
-    const reader = dlResp.body?.getReader()
-    if (!reader) throw new Error('无法读取下载流')
-
+    for (const chunk of initialChunks) {
+      fileStream.write(Buffer.from(chunk))
+      downloadedBytes += chunk.length
+    }
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -127,10 +159,41 @@ export async function downloadItem(
 
     return { success: true, filePath: savePath, fileSize: downloadedBytes }
   } catch (err: any) {
-    return { success: false, error: err.message }
+    const message = err?.message || '下载失败'
+    return {
+      success: false,
+      error: message,
+      retryable: !/验证|登录失效|重新登录|限制.*频率|IP|不是有效的 ZIP|网页而不是 ZIP/.test(message)
+    }
   }
 }
 
-function sanitizeFileName(name: string): string {
-  return name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').replace(/_+/g, '_').substring(0, 100)
+function isZipHeader(value: Uint8Array): boolean {
+  if (value.length < 4) return false
+  return value[0] === 0x50 && value[1] === 0x4b &&
+    ((value[2] === 0x03 && value[3] === 0x04) ||
+      (value[2] === 0x05 && value[3] === 0x06) ||
+      (value[2] === 0x07 && value[3] === 0x08))
+}
+
+async function readZipPrefix(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<Uint8Array[]> {
+  const chunks: Uint8Array[] = []
+  let length = 0
+  while (length < 4) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    length += value.length
+  }
+  return chunks
+}
+
+function isZipFile(filePath: string): boolean {
+  const header = Buffer.alloc(4)
+  const fd = openSync(filePath, 'r')
+  try {
+    return readSync(fd, header, 0, header.length, 0) === header.length && isZipHeader(header)
+  } finally {
+    closeSync(fd)
+  }
 }

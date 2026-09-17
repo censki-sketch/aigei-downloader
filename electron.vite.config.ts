@@ -32,7 +32,15 @@ export default defineConfig({
         '@': resolve(__dirname, 'src/renderer')
       }
     },
-    plugins: [vue()],
+    plugins: [
+      vue({
+        template: {
+          compilerOptions: {
+            isCustomElement: (tag) => tag === 'webview'
+          }
+        }
+      })
+    ],
     server: {
       port: 5173
     }

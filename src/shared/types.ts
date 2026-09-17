@@ -8,7 +8,58 @@ export interface ResourceItem {
   isVip: boolean
   fileType: string // audio_mp3, video, 3d, image...
   size?: string
+  detailUrl?: string
+  sourceUrl?: string
+  previewUrl?: string
+  description?: string
+  category?: string
+  categoryPath?: string[]
+  tags?: string[]
+  licenseType?: string
+  format?: string
+  duration?: string
+  downloadCount?: string
+  uploadTime?: string
+  author?: string
+  metadata?: Record<string, unknown>
   selected?: boolean
+}
+
+export interface ResourcePageResult {
+  items: ResourceItem[]
+  currentUrl: string
+  currentPage: number
+  totalPages?: number
+  previousUrl?: string
+  nextUrl?: string
+  pages: Array<{ page: number; url: string }>
+}
+
+export interface DownloadItemInput {
+  itemId?: string
+  url: string
+  title: string
+  type?: string
+  fileType?: string
+  thumbnail?: string
+  detailUrl?: string
+  sourceUrl?: string
+  previewUrl?: string
+  description?: string
+  category?: string
+  categoryPath?: string[]
+  tags?: string[]
+  licenseType?: string
+  format?: string
+  duration?: string
+  downloadCount?: string
+  uploadTime?: string
+  author?: string
+  metadata?: Record<string, unknown>
+  extractedPath?: string
+  extractedAt?: number
+  archiveEntryCount?: number
+  archiveSummary?: Record<string, unknown>
 }
 
 export interface DownloadTask {
@@ -29,6 +80,71 @@ export interface DownloadTask {
   createdAt: number
   startedAt?: number
   finishedAt?: number
+  detailUrl?: string
+  sourceUrl?: string
+  previewUrl?: string
+  description?: string
+  category?: string
+  categoryPath?: string[]
+  tags?: string[]
+  licenseType?: string
+  format?: string
+  duration?: string
+  downloadCount?: string
+  uploadTime?: string
+  author?: string
+  metadata?: Record<string, unknown>
+  extractedPath?: string
+  extractedAt?: number
+  archiveEntryCount?: number
+  archiveSummary?: Record<string, unknown>
+}
+
+export interface ArchiveEntry {
+  path: string
+  name: string
+  extension: string
+  size: number
+  compressedSize: number
+  isDirectory: boolean
+  modifiedAt?: number
+}
+
+export interface ArchiveInspection {
+  filePath: string
+  fileCount: number
+  directoryCount: number
+  totalSize: number
+  formats: Record<string, number>
+  entries: ArchiveEntry[]
+}
+
+export interface HistoryEntry {
+  id: number
+  itemId?: string
+  title?: string
+  url?: string
+  detailUrl?: string
+  filePath?: string
+  fileSize?: number
+  fileType?: string
+  thumbnail?: string
+  category?: string
+  categoryPath?: string[]
+  tags?: string[]
+  licenseType?: string
+  format?: string
+  duration?: string
+  downloadCount?: string
+  uploadTime?: string
+  author?: string
+  description?: string
+  metadata?: Record<string, unknown>
+  archiveEntryCount?: number
+  archiveSummary?: Record<string, unknown>
+  extractedPath?: string
+  extractedAt?: number
+  createdAt?: string | number
 }
 
 export type DownloadStatus =
@@ -41,6 +157,7 @@ export type DownloadStatus =
 
 export interface LoginStatus {
   isLoggedIn: boolean
+  userId?: string
   username?: string
   vipLevel?: string
   coins?: number

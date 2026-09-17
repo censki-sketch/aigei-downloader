@@ -1,4 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { h } from 'vue'
+
+const VerifyRouteView = { name: 'VerifyRouteView', render: () => h('div') }
 
 const routes = [
   { path: '/', redirect: '/browser' },
@@ -11,6 +14,11 @@ const routes = [
     path: '/browser',
     name: 'browser',
     component: () => import('../views/BrowserView.vue')
+  },
+  {
+    path: '/verify',
+    name: 'verify',
+    component: VerifyRouteView
   },
   {
     path: '/downloads',
