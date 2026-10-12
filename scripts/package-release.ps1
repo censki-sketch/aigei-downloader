@@ -12,25 +12,81 @@ $outputDir = Join-Path $projectRoot 'dist-build'
 $unpackedDir = Join-Path $outputDir 'win-unpacked'
 $zipPath = Join-Path $outputDir "AigeiDownloader-$version-win-x64.zip"
 
+function Write-GitHubError {
+  param([string]$Title, [string]$Message)
+
+  if ($env:GITHUB_ACTIONS -ne 'true') { return }
+
+  $escapedTitle = $Title.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+  $escapedMessage = $Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+  Write-Host "::error title=$escapedTitle::$escapedMessage"
+}
+
+function Invoke-BuildCommand {
+  param(
+    [string]$Name,
+    [string]$FilePath,
+    [string[]]$Arguments
+  )
+
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $commandOutput = @(& $FilePath @Arguments 2>&1)
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  $textOutput = @($commandOutput | ForEach-Object { $_.ToString() })
+  $textOutput | ForEach-Object { Write-Host $_ }
+
+  if ($exitCode -ne 0) {
+    $tail = ($textOutput | Select-Object -Last 25 | Out-String).Trim()
+    $message = "$Name failed with exit code $exitCode"
+    if ($tail) { $message += "`n$tail" }
+    Write-GitHubError -Title "$Name failed" -Message $message
+    throw $message
+  }
+}
+
 Write-Host '[1/3] Building application...'
-& node --require ./crypto-polyfill.js node_modules/electron-vite/bin/electron-vite.js build
-if ($LASTEXITCODE -ne 0) { throw 'Application build failed' }
+Invoke-BuildCommand -Name 'Application build' -FilePath 'node' -Arguments @(
+  '--require', './crypto-polyfill.js',
+  'node_modules/electron-vite/bin/electron-vite.js',
+  'build'
+)
 
 if ($SkipInstaller) {
   Write-Host '[2/3] Building unpacked application...'
-  & node node_modules/electron-builder/out/cli/cli.js --win dir --x64
+  $builderTarget = 'dir'
 } else {
   Write-Host '[2/3] Building Windows installer...'
-  & node node_modules/electron-builder/out/cli/cli.js --win nsis --x64
+  $builderTarget = 'nsis'
 }
-if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed' }
+Invoke-BuildCommand -Name 'Windows packaging' -FilePath 'node' -Arguments @(
+  'node_modules/electron-builder/out/cli/cli.js',
+  '--win', $builderTarget,
+  '--x64',
+  '--publish', 'never'
+)
 if (-not (Test-Path -LiteralPath $unpackedDir)) { throw "Unpacked application not found: $unpackedDir" }
 
 Write-Host '[3/3] Compressing portable ZIP...'
 if (Test-Path -LiteralPath $zipPath) {
   Remove-Item -LiteralPath $zipPath -Force
 }
-Compress-Archive -Path (Join-Path $unpackedDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+try {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $unpackedDir,
+    $zipPath,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $false
+  )
+} catch {
+  Write-GitHubError -Title 'Portable ZIP creation failed' -Message $_.Exception.Message
+  throw
+}
 
 Write-Host ''
 Write-Host "Portable ZIP: $zipPath"
