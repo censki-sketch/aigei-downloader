@@ -1,6 +1,6 @@
 # 爱给下载器 (AigeiDownloader)
 
-基于 Electron + Vue 3 + Playwright 的爱给网批量下载桌面工具。
+基于 Electron + Vue 3 的爱给网批量下载桌面工具。
 
 ## 功能特性
 
@@ -18,9 +18,8 @@
 | 桌面外壳 | Electron 32 |
 | 前端界面 | Vue 3 + Element Plus + Pinia + Vue Router |
 | 构建工具 | electron-vite + Vite |
-| 浏览器自动化 | Playwright (Chromium) |
 | 本地存储 | better-sqlite3 |
-| 打包 | electron-builder (NSIS) |
+| 打包 | electron-builder（NSIS 安装版 + ZIP 免安装版） |
 
 ## 项目结构
 
@@ -61,6 +60,10 @@ aigei-downloader/
 
 ## 开发与运行
 
+### Windows 一键启动
+
+首次使用源码时，直接双击项目根目录的 `一键启动.bat`。脚本会自动切换到项目目录，缺少依赖时先执行安装，然后启动开发版。
+
 ### 1. 安装依赖
 
 ```bash
@@ -68,37 +71,55 @@ cd aigei-downloader
 npm install
 ```
 
-### 2. 安装 Playwright 浏览器（首次必须）
-
-```bash
-npx playwright install chromium
-```
-
-### 3. 开发模式运行
+### 2. 开发模式运行
 
 ```bash
 npm run dev
 ```
 
-### 4. 构建生产版本
+### 3. 构建生产版本
 
 ```bash
 npm run build
 ```
 
-### 5. 打包成 exe 安装包
+### 4. 生成 Windows 发行版
+
+```bash
+npm run release:win
+```
+
+也可以直接双击 `一键打包.bat`。打包结果位于 `dist-build/`：
+
+- `AigeiDownloader-Setup-版本-x64.exe`：安装版。
+- `AigeiDownloader-版本-win-x64.zip`：免安装版，解压后运行 `AigeiDownloader.exe`。
+
+只生成安装版：
 
 ```bash
 npm run build:exe
 ```
 
-打包后生成在 `release/` 目录，包含 NSIS 安装包。
-
-### 6. 打包成免安装便携版
+只生成免安装 ZIP：
 
 ```bash
 npm run build:portable
 ```
+
+## GitHub 自动发布
+
+项目包含 `.github/workflows/release.yml`：
+
+1. 在 `package.json` 中更新版本号，例如 `1.0.1`。
+2. 提交并推送代码。
+3. 创建并推送同版本标签：
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+GitHub Actions 会自动构建安装版和免安装 ZIP，并发布到仓库的 Releases 页面。也可以在 Actions 页面手动运行工作流；手动运行只生成可下载的构建产物，不创建 Release。
 
 ## 使用流程
 

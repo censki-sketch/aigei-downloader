@@ -5,6 +5,8 @@ dist-build/
 out-release/
 *.log
 *.tmp
+dev-*.txt
+exe-*.txt
 .env
 .DS_Store
 Thumbs.db

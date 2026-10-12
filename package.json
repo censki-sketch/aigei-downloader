@@ -1,7 +1,7 @@
 {
   "name": "aigei-downloader",
   "version": "1.0.0",
-  "description": "爱给网批量下载工具 - 基于 Electron + Vue 3 + Playwright",
+  "description": "爱给网批量下载桌面工具 - 基于 Electron + Vue 3",
   "author": "rihao",
   "license": "MIT",
   "main": "dist/main/index.js",
@@ -9,10 +9,11 @@
     "dev": "node --require ./crypto-polyfill.js node_modules/electron-vite/bin/electron-vite.js dev",
     "build": "node --require ./crypto-polyfill.js node_modules/electron-vite/bin/electron-vite.js build",
     "preview": "electron-vite preview",
-    "build:exe": "electron-vite build && electron-builder --win",
-    "build:portable": "electron-vite build && electron-builder --win portable",
+    "build:exe": "node --require ./crypto-polyfill.js node_modules/electron-vite/bin/electron-vite.js build && electron-builder --win nsis --x64",
+    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1 -SkipInstaller",
+    "release:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "postinstall": "electron-rebuild -f -w better-sqlite3"
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
@@ -48,6 +49,7 @@
       "node_modules/better-sqlite3/**/*"
     ],
     "win": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "target": [
         {
           "target": "nsis",
@@ -58,10 +60,13 @@
       ]
     },
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "爱给下载器"
+      "createStartMenuShortcut": true,
+      "shortcutName": "爱给下载器",
+      "uninstallDisplayName": "爱给下载器"
     }
   }
 }
