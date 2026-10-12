@@ -1,32 +1,46 @@
 @echo off
-setlocal
-chcp 65001 >nul
+setlocal EnableExtensions
 cd /d "%~dp0"
-title 爱给下载器 - 开发模式
+title Aigei Downloader - Development
+set "NPM_CONFIG_CACHE=%LOCALAPPDATA%\AigeiDownloader\npm-cache"
+if not exist "%NPM_CONFIG_CACHE%" mkdir "%NPM_CONFIG_CACHE%" >nul 2>nul
 
-where node >nul 2>nul
+where node.exe >nul 2>nul
 if errorlevel 1 (
-  echo [错误] 未检测到 Node.js，请先安装 Node.js 20 或更高版本。
-  echo https://nodejs.org/
+  echo [ERROR] Node.js was not found.
+  echo Install Node.js 20 or newer from https://nodejs.org/
+  pause
+  exit /b 1
+)
+
+where npm.cmd >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] npm was not found.
+  echo Reinstall Node.js and enable the npm option.
   pause
   exit /b 1
 )
 
 if not exist "node_modules\electron-vite\bin\electron-vite.js" (
-  echo [准备] 首次运行，正在安装项目依赖...
-  call npm install
+  echo [SETUP] Installing project dependencies...
+  call npm.cmd install
   if errorlevel 1 (
-    echo [错误] 依赖安装失败，请检查网络或 npm 配置。
+    echo.
+    echo [ERROR] Dependency installation failed. Check the network and npm settings.
     pause
     exit /b 1
   )
 )
 
-echo [启动] 正在启动爱给下载器...
-call npm run dev
-if errorlevel 1 (
+echo [START] Starting Aigei Downloader...
+node --require ./crypto-polyfill.js node_modules/electron-vite/bin/electron-vite.js dev
+set "APP_EXIT_CODE=%ERRORLEVEL%"
+
+if not "%APP_EXIT_CODE%"=="0" (
   echo.
-  echo [错误] 启动失败，请保留此窗口中的错误信息。
+  echo [ERROR] Startup failed with exit code %APP_EXIT_CODE%.
+  echo Keep this window open and review the error above.
   pause
 )
 
+exit /b %APP_EXIT_CODE%
