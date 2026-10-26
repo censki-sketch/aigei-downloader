@@ -155,6 +155,14 @@ export type DownloadStatus =
   | 'paused'
   | 'queued'
 
+export interface DownloadQueueState {
+  paused: boolean
+  automaticallyPaused: boolean
+  pauseReason?: string
+  pendingCount: number
+  activeCount: number
+}
+
 export interface LoginStatus {
   isLoggedIn: boolean
   userId?: string
@@ -207,6 +215,7 @@ export const IPC_CHANNELS = {
   DOWNLOAD_GET_LIST: 'download:getList',
   DOWNLOAD_PROGRESS: 'download:progress', // 主进程推送进度
   DOWNLOAD_STATUS_CHANGE: 'download:statusChange',
+  DOWNLOAD_QUEUE_STATE: 'download:queueState',
 
   // 设置
   SETTINGS_GET: 'settings:get',

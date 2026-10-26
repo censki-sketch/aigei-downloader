@@ -1,5 +1,6 @@
 import { getCookieString } from './browser.js'
 import type { ResourceItem, ResourcePageResult } from '../shared/types.js'
+import { withAigeiServerDownloadFilter } from '../shared/aigei-filter.js'
 
 const AIGEI_URL = 'https://www.aigei.com'
 const DETAIL_CACHE_TTL = 30 * 60 * 1000
@@ -25,7 +26,8 @@ export async function scrapeListPage(listUrl: string): Promise<ResourceItem[]> {
 }
 
 export async function scrapeResourcePage(listUrl: string): Promise<ResourcePageResult> {
-  const targetUrl = normalizeUrl(listUrl, AIGEI_URL) || listUrl
+  const normalizedUrl = normalizeUrl(listUrl, AIGEI_URL) || listUrl
+  const targetUrl = withAigeiServerDownloadFilter(normalizedUrl)
   const html = await fetchAigeiHtml(targetUrl)
   assertNotSecurityCheckPage(html)
   const items = parseResourceList(html, targetUrl)

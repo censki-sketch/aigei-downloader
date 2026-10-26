@@ -76,6 +76,10 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return status ? getTasksByStatus(status) : getAllTasks()
   })
 
+  ipcMain.handle('download:getQueueState', async () => {
+    return downloadQueue.getState()
+  })
+
   ipcMain.handle('download:retry', async (_e, id: string) => {
     downloadQueue.retry(id)
     return true

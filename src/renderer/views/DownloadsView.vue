@@ -10,6 +10,8 @@ const loading = ref(false)
 const tasks = ref<any[]>([])
 const filterStatus = ref('all')
 const paused = ref(false)
+const automaticallyPaused = ref(false)
+const pauseReason = ref('')
 
 const statusOptions = [
   { label: '全部', value: 'all', count: () => totalCount.value },
@@ -55,10 +57,21 @@ const currentSpeed = computed(() =>
 const loadTasks = async () => {
   loading.value = true
   try {
-    tasks.value = await api.download.list()
+    const [list, queueState] = await Promise.all([
+      api.download.list(),
+      api.download.getQueueState()
+    ])
+    tasks.value = list
+    syncQueueState(queueState)
   } finally {
     loading.value = false
   }
+}
+
+const syncQueueState = (state: any) => {
+  paused.value = !!state?.paused
+  automaticallyPaused.value = !!state?.automaticallyPaused
+  pauseReason.value = state?.pauseReason || ''
 }
 
 const retryTask = async (task: any) => {
@@ -85,13 +98,12 @@ const togglePause = async () => {
   if (totalCount.value === 0) return
   if (paused.value) {
     await api.download.resume()
-    paused.value = false
     ElMessage.success('已恢复下载')
   } else {
     await api.download.pause()
-    paused.value = true
     ElMessage.info('已暂停下载')
   }
+  syncQueueState(await api.download.getQueueState())
 }
 
 const clearCompleted = async () => {
@@ -202,6 +214,7 @@ const formatDuration = (task: any): string => {
 
 let unsubProgress: (() => void) | null = null
 let unsubStatus: (() => void) | null = null
+let unsubQueueState: (() => void) | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
@@ -233,6 +246,7 @@ onMounted(() => {
       setTimeout(loadTasks, 1000)
     }
   })
+  unsubQueueState = api.download.onQueueState(syncQueueState)
   timer = setInterval(loadTasks, 5000)
 })
 
@@ -240,6 +254,7 @@ onUnmounted(() => {
   if (timer) clearInterval(timer)
   unsubProgress?.()
   unsubStatus?.()
+  unsubQueueState?.()
 })
 </script>
 
@@ -284,6 +299,16 @@ onUnmounted(() => {
           </div>
         </div>
       </template>
+
+      <el-alert
+        v-if="paused"
+        class="queue-alert"
+        :title="automaticallyPaused ? '下载队列已自动暂停' : '下载队列已暂停'"
+        :description="pauseReason"
+        type="warning"
+        show-icon
+        :closable="false"
+      />
 
       <div v-if="filteredTasks.length === 0" class="empty-pane">
         <el-empty :description="totalCount === 0 ? '暂无下载任务' : '当前筛选下没有任务'">
@@ -403,6 +428,11 @@ onUnmounted(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.queue-alert {
+  flex-shrink: 0;
+  margin-bottom: 12px;
 }
 
 .header {

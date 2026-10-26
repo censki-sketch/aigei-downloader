@@ -9,9 +9,9 @@ import {
   addHistory
 } from './db.js'
 import { downloadItem, getDefaultSaveDir } from './downloader.js'
-import { getArchivePath, getLibraryPath, resolveCategoryPath } from './classifier.js'
+import { getArchivePath, resolveCategoryPath } from './classifier.js'
 import { inspectArchive } from './archive.js'
-import type { DownloadItemInput, DownloadTask } from '../shared/types.js'
+import type { DownloadItemInput, DownloadQueueState, DownloadTask } from '../shared/types.js'
 
 interface QueueEntry {
   id: string
@@ -23,6 +23,8 @@ class DownloadQueue {
   private active: Map<string, Promise<void>> = new Map()
   private maxConcurrent = 2
   private paused = false
+  private automaticallyPaused = false
+  private pauseReason: string | undefined
   private retryLimit = 3
   private requestDelay = 5000
 
@@ -38,12 +40,28 @@ class DownloadQueue {
     this.requestDelay = ms
   }
 
-  pause(): void {
+  getState(): DownloadQueueState {
+    return {
+      paused: this.paused,
+      automaticallyPaused: this.automaticallyPaused,
+      pauseReason: this.pauseReason,
+      pendingCount: this.queue.length,
+      activeCount: this.active.size
+    }
+  }
+
+  pause(reason = '下载队列已手动暂停', automaticallyPaused = false): void {
     this.paused = true
+    this.automaticallyPaused = automaticallyPaused
+    this.pauseReason = reason
+    this.notifyQueueState()
   }
 
   resume(): void {
     this.paused = false
+    this.automaticallyPaused = false
+    this.pauseReason = undefined
+    this.notifyQueueState()
     void this.tick()
   }
 
@@ -86,12 +104,16 @@ class DownloadQueue {
       uploadTime: normalizedInput.uploadTime,
       author: normalizedInput.author,
       metadata: normalizedInput.metadata,
-      extractedPath: getLibraryPath(saveDir, normalizedInput.title, normalizedInput),
       archiveEntryCount: 0,
       archiveSummary: {}
     }
     saveTask(task)
     this.queue.push({ id, input: normalizedInput })
+    if (this.automaticallyPaused) {
+      this.resume()
+      return id
+    }
+    this.notifyQueueState()
     void this.tick()
     return id
   }
@@ -114,6 +136,11 @@ class DownloadQueue {
       task.error = undefined
       saveTask(task)
       this.queue.push({ id: task.id, input: taskToInput(task) })
+      if (this.automaticallyPaused) {
+        this.resume()
+        return
+      }
+      this.notifyQueueState()
       void this.tick()
     }
   }
@@ -125,6 +152,7 @@ class DownloadQueue {
     if (task) {
       deleteTask(task.id)
       this.queue = this.queue.filter((q) => q.id !== task.id)
+      this.notifyQueueState()
     }
   }
 
@@ -139,8 +167,10 @@ class DownloadQueue {
       const entry = this.queue.shift()!
       const promise = this.processEntry(entry)
       this.active.set(entry.id, promise)
+      this.notifyQueueState()
       void promise.finally(() => {
         this.active.delete(entry.id)
+        this.notifyQueueState()
         void this.tick()
       })
     }
@@ -158,7 +188,7 @@ class DownloadQueue {
     try {
       const saveDir = this.getSaveDir()
       const archivePath = task.savePath || getArchivePath(saveDir, entry.input.title, entry.input)
-      const result = await downloadItem(entry.input.url, entry.input.title, archivePath, (downloaded, total, speed) => {
+      const result = await downloadItem(entry.input, archivePath, (downloaded, total, speed) => {
         task.downloadedBytes = downloaded
         task.totalBytes = total
         task.speed = speed
@@ -171,21 +201,13 @@ class DownloadQueue {
         const finishedAt = Date.now()
         const downloadedBytes = result.fileSize || task.downloadedBytes
         task.status = 'completed'
+        task.savePath = result.filePath || archivePath
+        task.format = result.format || task.format
         task.progress = 100
         task.finishedAt = finishedAt
         task.downloadedBytes = downloadedBytes
         task.totalBytes = task.totalBytes || downloadedBytes
         task.speed = this.getAverageSpeed(downloadedBytes, task.startedAt, finishedAt)
-        task.extractedPath =
-          task.extractedPath || getLibraryPath(saveDir, task.title, {
-            url: task.url,
-            title: task.title,
-            fileType: task.fileType,
-            category: task.category,
-            categoryPath: task.categoryPath,
-            tags: task.tags
-          })
-
         try {
           const archive = await inspectArchive(result.filePath!)
           task.archiveEntryCount = archive.fileCount
@@ -221,7 +243,7 @@ class DownloadQueue {
           uploadTime: task.uploadTime,
           author: task.author,
           metadata: task.metadata,
-          extractedPath: task.extractedPath,
+          extractedPath: task.extractedAt ? task.extractedPath : undefined,
           archiveEntryCount: task.archiveEntryCount,
           archiveSummary: task.archiveSummary
         })
@@ -241,13 +263,16 @@ class DownloadQueue {
         this.notifyStatusChange(task)
         await new Promise((resolve) => setTimeout(resolve, this.requestDelay))
         this.queue.push(entry)
+        this.notifyQueueState()
         void this.tick()
       } else {
         task.status = 'failed'
         task.finishedAt = Date.now()
         saveTask(task)
         this.notifyStatusChange(task)
-        if (!retryable) this.paused = true
+        if (!retryable) {
+          this.pause(`任务“${task.title}”失败：${task.error}`, true)
+        }
       }
     }
 
@@ -298,6 +323,13 @@ class DownloadQueue {
         archiveEntryCount: task.archiveEntryCount,
         archiveSummary: task.archiveSummary
       })
+    }
+  }
+
+  private notifyQueueState(): void {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('download:queueState', this.getState())
     }
   }
 }

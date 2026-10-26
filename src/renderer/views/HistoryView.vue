@@ -32,6 +32,8 @@ const getPath = (row: any): string => {
   return row.filePath || row.savePath || ''
 }
 
+const hasBeenExtracted = (row: any): boolean => Boolean(row?.extractedAt && row?.extractedPath)
+
 const searchableText = (row: any): string => {
   return [
     row.title,
@@ -44,7 +46,7 @@ const searchableText = (row: any): string => {
     row.url,
     row.detailUrl,
     getPath(row),
-    row.extractedPath,
+    hasBeenExtracted(row) ? row.extractedPath : '',
     archiveFormatText(row.archiveSummary?.formats),
     ...normalizeList(row.categoryPath),
     ...normalizeList(row.tags)
@@ -137,7 +139,7 @@ const openLocation = async (row: any) => {
 }
 
 const openExtractedPath = async (row: any) => {
-  if (!row.extractedPath) return
+  if (!hasBeenExtracted(row)) return
   try {
     await api.system.openPath(row.extractedPath)
   } catch (e: any) {
@@ -151,6 +153,14 @@ const openHistoryDetail = (row: any) => {
   router.push({ path: '/verify', query: { url: targetUrl } })
 }
 
+const isArchive = (row: any): boolean => /\.zip$/i.test(getPath(row) || '')
+
+const friendlyErrorMessage = (error: any): string => {
+  return String(error?.message || error || '未知错误')
+    .replace(/^Error invoking remote method '[^']+':\s*/i, '')
+    .replace(/^Error:\s*/i, '')
+}
+
 const inspectHistoryArchive = async (row: any) => {
   if (!row.id) return
   archiveTarget.value = row
@@ -161,7 +171,7 @@ const inspectHistoryArchive = async (row: any) => {
     archiveInspection.value = await api.history.inspectArchive(row.id)
   } catch (e: any) {
     archiveDialogVisible.value = false
-    ElMessage.error('查看压缩包失败: ' + e.message)
+    ElMessage.error('查看压缩包失败：' + friendlyErrorMessage(e))
   } finally {
     archiveLoading.value = false
   }
@@ -184,7 +194,7 @@ const extractHistoryArchive = async (row: any) => {
     }
     ElMessage.success('解压完成')
   } catch (e: any) {
-    ElMessage.error('解压失败: ' + e.message)
+    ElMessage.error('解压失败：' + friendlyErrorMessage(e))
   } finally {
     extractingId.value = null
   }
@@ -261,7 +271,7 @@ onMounted(() => {
             <template #default="{ row }">
               <div class="path-cell">
                 <span class="path-text">{{ getPath(row) || '-' }}</span>
-                <span v-if="row.extractedPath" class="path-text extracted">已解压：{{ row.extractedPath }}</span>
+                <span v-if="hasBeenExtracted(row)" class="path-text extracted">已解压：{{ row.extractedPath }}</span>
               </div>
             </template>
           </el-table-column>
@@ -269,8 +279,9 @@ onMounted(() => {
             <template #default="{ row }">
               <div class="row-actions">
                 <el-button size="small" :icon="FolderOpened" @click="openLocation(row)">位置</el-button>
-                <el-button size="small" :icon="View" @click="inspectHistoryArchive(row)">内容</el-button>
+                <el-button v-if="isArchive(row)" size="small" :icon="View" @click="inspectHistoryArchive(row)">内容</el-button>
                 <el-button
+                  v-if="isArchive(row)"
                   size="small"
                   type="primary"
                   plain
@@ -280,7 +291,7 @@ onMounted(() => {
                 >
                   解压
                 </el-button>
-                <el-button v-if="row.extractedPath" size="small" :icon="Files" @click="openExtractedPath(row)">目录</el-button>
+                <el-button v-if="hasBeenExtracted(row)" size="small" :icon="Files" @click="openExtractedPath(row)">目录</el-button>
                 <el-button size="small" :icon="CopyDocument" @click="copyPath(row)">复制</el-button>
               </div>
             </template>
@@ -318,10 +329,10 @@ onMounted(() => {
       </div>
       <template #footer>
         <div class="dialog-footer">
-          <span v-if="archiveTarget?.extractedPath" class="filter-url">已解压到 {{ archiveTarget.extractedPath }}</span>
+          <span v-if="hasBeenExtracted(archiveTarget)" class="filter-url">已解压到 {{ archiveTarget.extractedPath }}</span>
           <span v-else></span>
           <div class="filter-actions">
-            <el-button v-if="archiveTarget?.extractedPath" :icon="Files" @click="openExtractedPath(archiveTarget)">打开目录</el-button>
+            <el-button v-if="hasBeenExtracted(archiveTarget)" :icon="Files" @click="openExtractedPath(archiveTarget)">打开目录</el-button>
             <el-button
               type="primary"
               :icon="Download"

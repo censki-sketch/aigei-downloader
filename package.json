@@ -1,6 +1,6 @@
 {
   "name": "aigei-downloader",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "爱给网批量下载桌面工具 - 基于 Electron + Vue 3",
   "author": "rihao",
   "license": "MIT",

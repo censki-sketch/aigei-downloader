@@ -4,13 +4,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, Download, Filter, Link, Picture, Refresh, Search, User, VideoPlay } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import type { ResourcePageResult } from '../../shared/types'
+import type { DownloadItemInput, ResourcePageResult } from '../../shared/types'
+import { withAigeiServerDownloadFilter } from '../../shared/aigei-filter'
 
 defineOptions({ name: 'BrowserView' })
 
 const router = useRouter()
 const loading = ref(false)
-const DEFAULT_LIST_URL = 'https://www.aigei.com/sound/class/'
+const DEFAULT_LIST_URL = 'https://www.aigei.com/sound/cc/is_vip_false/'
 const urlInput = ref(DEFAULT_LIST_URL)
 const keyword = ref('')
 const resources = ref<any[]>([])
@@ -26,13 +27,13 @@ let unsubLoginSuccess: (() => void) | null = null
 const pageCache = new Map<string, ResourcePageResult>()
 
 const categories = reactive([
-  { name: '音效', url: 'https://www.aigei.com/sound/class/' },
-  { name: '配乐', url: 'https://www.aigei.com/music/class/' },
-  { name: '视频', url: 'https://www.aigei.com/video/index/' },
-  { name: '3D', url: 'https://www.aigei.com/3d/model/' },
-  { name: '平面', url: 'https://www.aigei.com/design/index/' },
-  { name: '游戏', url: 'https://www.aigei.com/game/index/' },
-  { name: '教程', url: 'https://www.aigei.com/course/all/' }
+  { name: '音效', url: 'https://www.aigei.com/sound/cc/is_vip_false/', matchPath: '/sound/' },
+  { name: '配乐', url: 'https://www.aigei.com/music/class/is_vip_false/', matchPath: '/music/class/' },
+  { name: '视频', url: 'https://www.aigei.com/video/index/is_vip_false/', matchPath: '/video/index/' },
+  { name: '3D', url: 'https://www.aigei.com/3d/model/is_vip_false/', matchPath: '/3d/model/' },
+  { name: '平面', url: 'https://www.aigei.com/design/index/is_vip_false/', matchPath: '/design/index/' },
+  { name: '游戏', url: 'https://www.aigei.com/game/index/?term=is_vip_false', matchPath: '/game/index/' },
+  { name: '教程', url: 'https://www.aigei.com/course/all/?term=is_vip_false', matchPath: '/course/all/' }
 ])
 
 const filteredResources = computed(() => {
@@ -46,7 +47,7 @@ const activeCategory = computed(() => {
   return categories.find((category) => {
     const target = new URL(category.url)
     const actual = new URL(current)
-    return actual.hostname === target.hostname && actual.pathname.startsWith(target.pathname)
+    return actual.hostname === target.hostname && actual.pathname.startsWith(category.matchPath)
   })?.name || ''
 })
 
@@ -98,7 +99,7 @@ const goToPage = async (url?: string) => {
 const normalizeAigeiUrl = (value: string): string => {
   try {
     const url = new URL(value || DEFAULT_LIST_URL, DEFAULT_LIST_URL)
-    return url.toString()
+    return withAigeiServerDownloadFilter(url.toString())
   } catch {
     return DEFAULT_LIST_URL
   }
@@ -109,6 +110,7 @@ const inferSearchType = (value: string): string => {
     const url = new URL(value || DEFAULT_LIST_URL, DEFAULT_LIST_URL)
     const fromQuery = url.searchParams.get('type')
     if (fromQuery) return fromQuery
+    if (/^\/sound\/cc(?:\/|$)/i.test(url.pathname)) return 'cc_sound'
     const match = url.pathname.match(/\/(sound|music|video|3d|design|image|psd|game|course|software)\//i)
     return match?.[1]?.toLowerCase() === 'psd' ? 'design' : match?.[1]?.toLowerCase() || 'sound'
   } catch {
@@ -358,8 +360,9 @@ const downloadSelected = async () => {
     await api.download.addBatch(items)
     ElMessage.success(`已添加 ${items.length} 个任务到下载队列`)
     router.push('/downloads')
-  } catch {
-    // 取消
+  } catch (e: any) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error('添加失败: ' + (e?.message || e || '未知错误'))
   }
 }
 
@@ -372,28 +375,34 @@ const downloadOne = async (row: any) => {
   }
 }
 
-const resourceToDownloadInput = (row: any) => ({
-  itemId: row.itemId,
-  url: row.url || row.detailUrl || row.sourceUrl,
-  title: row.title || row.url || '未命名资源',
-  type: row.fileType,
-  fileType: row.fileType,
-  thumbnail: row.thumbnail,
-  detailUrl: row.detailUrl || row.url,
-  sourceUrl: row.sourceUrl || row.url,
-  previewUrl: row.previewUrl,
-  description: row.description,
-  category: row.category,
-  categoryPath: normalizeList(row.categoryPath),
-  tags: normalizeList(row.tags),
-  licenseType: row.licenseType,
-  format: row.format,
-  duration: row.duration,
-  downloadCount: row.downloadCount,
-  uploadTime: row.uploadTime,
-  author: row.author,
-  metadata: row.metadata
-})
+const resourceToDownloadInput = (row: any): DownloadItemInput => {
+  const input: DownloadItemInput = {
+    itemId: row.itemId,
+    url: row.url || row.detailUrl || row.sourceUrl,
+    title: row.title || row.url || '未命名资源',
+    type: row.fileType,
+    fileType: row.fileType,
+    thumbnail: row.thumbnail,
+    detailUrl: row.detailUrl || row.url,
+    sourceUrl: row.sourceUrl || row.url,
+    previewUrl: row.previewUrl,
+    description: row.description,
+    category: row.category,
+    categoryPath: normalizeList(row.categoryPath),
+    tags: normalizeList(row.tags),
+    licenseType: row.licenseType,
+    format: row.format,
+    duration: row.duration,
+    downloadCount: row.downloadCount,
+    uploadTime: row.uploadTime,
+    author: row.author,
+    metadata: row.metadata
+  }
+
+  // Vue makes list rows and nested metadata reactive Proxies. Electron IPC can
+  // only transfer structured-cloneable values, so strip all reactive wrappers.
+  return JSON.parse(JSON.stringify(input)) as DownloadItemInput
+}
 
 const searchableText = (row: any): string => {
   return [

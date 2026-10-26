@@ -21,6 +21,7 @@ declare global {
         add: (inputOrUrl: any | string, title?: string, type?: string) => Promise<string>
         addBatch: (items: any[]) => Promise<string[]>
         list: (status?: string) => Promise<any[]>
+        getQueueState: () => Promise<any>
         retry: (id: string) => Promise<boolean>
         remove: (id: string) => Promise<boolean>
         pause: () => Promise<boolean>
@@ -29,6 +30,7 @@ declare global {
         clearCompleted: () => Promise<boolean>
         onProgress: (cb: (data: any) => void) => () => void
         onStatusChange: (cb: (data: any) => void) => () => void
+        onQueueState: (cb: (data: any) => void) => () => void
       }
       settings: {
         get: (key: string) => Promise<string | undefined>

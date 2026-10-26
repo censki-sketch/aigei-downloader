@@ -30,7 +30,7 @@ export function resolveCategoryPath(input: Pick<DownloadItemInput, 'category' | 
 }
 
 export function getArchivePath(saveRoot: string, title: string, input: DownloadItemInput): string {
-  return join(saveRoot, 'archives', ...resolveCategoryPath(input), `${sanitizeFileName(title || '未命名资源')}.zip`)
+  return join(saveRoot, 'archives', ...resolveCategoryPath(input), `${sanitizeFileName(title || '未命名资源')}${defaultExtension(input)}`)
 }
 
 export function getLibraryPath(saveRoot: string, title: string, input: DownloadItemInput): string {
@@ -56,4 +56,13 @@ function cleanSegments(values?: string[] | string): string[] {
     .map((value) => value.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim())
     .filter((value) => value && value !== '.' && value !== '..')
     .slice(0, 5)
+}
+
+function defaultExtension(input: DownloadItemInput): string {
+  const type = String(input.fileType || input.type || '').toLowerCase()
+  const format = String(input.format || '').toLowerCase().match(/(?:^|\b)(mp3|mp4|wav|flac|ogg|aac|m4a|zip|rar|7z)(?:\b|$)/)?.[1]
+  if (type === 'sound' || type === 'music' || type.includes('audio')) {
+    return `.${format || 'mp3'}`
+  }
+  return `.${format || 'zip'}`
 }

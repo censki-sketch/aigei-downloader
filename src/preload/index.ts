@@ -30,6 +30,7 @@ const api = {
     addBatch: (items: DownloadItemInput[]) =>
       ipcRenderer.invoke('download:addBatch', items),
     list: (status?: string) => ipcRenderer.invoke('download:list', status),
+    getQueueState: () => ipcRenderer.invoke('download:getQueueState'),
     retry: (id: string) => ipcRenderer.invoke('download:retry', id),
     remove: (id: string) => ipcRenderer.invoke('download:remove', id),
     pause: () => ipcRenderer.invoke('download:pause'),
@@ -45,6 +46,11 @@ const api = {
       const handler = (_e: any, data: any) => callback(data)
       ipcRenderer.on('download:statusChange', handler)
       return () => ipcRenderer.removeListener('download:statusChange', handler)
+    },
+    onQueueState: (callback: (data: any) => void) => {
+      const handler = (_e: any, data: any) => callback(data)
+      ipcRenderer.on('download:queueState', handler)
+      return () => ipcRenderer.removeListener('download:queueState', handler)
     }
   },
 
