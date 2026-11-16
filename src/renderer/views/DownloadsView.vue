@@ -8,10 +8,17 @@ import { api } from '../api'
 const router = useRouter()
 const loading = ref(false)
 const tasks = ref<any[]>([])
+const clearing = ref(false)
 const filterStatus = ref('all')
 const paused = ref(false)
 const automaticallyPaused = ref(false)
 const pauseReason = ref('')
+const pauseKind = ref<string>('')
+const nextStartAt = ref<number | undefined>(undefined)
+const hourlyUsed = ref(0)
+const hourlyLimit = ref(0)
+const hourlyResetAt = ref<number | undefined>(undefined)
+const nowTick = ref(Date.now())
 
 const statusOptions = [
   { label: '全部', value: 'all', count: () => totalCount.value },
@@ -47,6 +54,7 @@ const totalCount = computed(() => tasks.value.length)
 const pendingCount = computed(() => tasks.value.filter((task) => task.status === 'pending' || task.status === 'queued').length)
 const downloadingCount = computed(() => tasks.value.filter((task) => task.status === 'downloading').length)
 const completedCount = computed(() => tasks.value.filter((task) => task.status === 'completed').length)
+const clearableCount = computed(() => tasks.value.filter((task) => task.status !== 'downloading').length)
 const failedCount = computed(() => tasks.value.filter((task) => task.status === 'failed').length)
 const currentSpeed = computed(() =>
   tasks.value
@@ -72,6 +80,74 @@ const syncQueueState = (state: any) => {
   paused.value = !!state?.paused
   automaticallyPaused.value = !!state?.automaticallyPaused
   pauseReason.value = state?.pauseReason || ''
+  pauseKind.value = state?.pauseKind || ''
+  nextStartAt.value = state?.nextStartAt
+  hourlyUsed.value = Number(state?.hourlyUsed) || 0
+  hourlyLimit.value = Number(state?.hourlyLimit) || 0
+  hourlyResetAt.value = state?.hourlyResetAt
+}
+
+const pauseAlertType = computed<'error' | 'warning' | 'info'>(() => {
+  if (pauseKind.value === 'anti-bot') return 'error'
+  if (pauseKind.value === 'task-failure') return 'warning'
+  return 'info'
+})
+
+const pauseAlertTitle = computed(() => {
+  switch (pauseKind.value) {
+    case 'anti-bot':
+      return '爱给网风控触发：队列已自动暂停'
+    case 'hourly-limit':
+      return '已达每小时下载上限：队列将自动恢复'
+    case 'task-failure':
+      return '任务失败：队列已自动暂停'
+    default:
+      return automaticallyPaused.value ? '下载队列已自动暂停' : '下载队列已暂停'
+  }
+})
+
+const formatCountdown = (ms: number): string => {
+  const total = Math.max(0, Math.round(ms / 1000))
+  if (total < 60) return `${total} 秒`
+  const min = Math.floor(total / 60)
+  const sec = total % 60
+  if (min < 60) return sec > 0 ? `${min} 分 ${sec} 秒` : `${min} 分`
+  const hour = Math.floor(min / 60)
+  return `${hour} 小时 ${min % 60} 分`
+}
+
+const nextStartCountdown = computed(() => {
+  const target = nextStartAt.value || hourlyResetAt.value
+  if (!target) return ''
+  const diff = target - nowTick.value
+  if (diff <= 0) return ''
+  return formatCountdown(diff)
+})
+
+const nextStartLabel = computed(() => {
+  if (!nextStartCountdown.value) return ''
+  if (hourlyResetAt.value && hourlyResetAt.value > nowTick.value) {
+    return `还有 ${nextStartCountdown.value}后恢复下载`
+  }
+  if (paused.value) return ''
+  return downloadingCount.value > 0 || pendingCount.value > 0
+    ? `下一个任务将在 ${nextStartCountdown.value}后开始`
+    : ''
+})
+
+const hourlyPercent = computed(() => {
+  if (hourlyLimit.value <= 0) return 0
+  return Math.min(100, Math.round((hourlyUsed.value / hourlyLimit.value) * 100))
+})
+
+const hourlyPercentColor = computed(() => {
+  if (hourlyPercent.value >= 100) return '#f56c6c'
+  if (hourlyPercent.value >= 80) return '#e6a23c'
+  return '#67c23a'
+})
+
+const goVerify = () => {
+  router.push('/verify')
 }
 
 const retryTask = async (task: any) => {
@@ -115,6 +191,25 @@ const clearCompleted = async () => {
     ElMessage.success('已清除完成任务')
   } catch {
     // 取消
+  }
+}
+
+const clearInactive = async () => {
+  if (clearableCount.value === 0 || clearing.value) return
+  try {
+    await ElMessageBox.confirm(
+      `清除全部分类中的 ${clearableCount.value} 个非进行中任务记录？等待任务也会移出队列。正在执行的任务、已下载文件和历史记录会保留。`,
+      '一键清除',
+      { type: 'warning', confirmButtonText: '清除任务', cancelButtonText: '取消' }
+    )
+    clearing.value = true
+    const count = await api.download.clearInactive()
+    await loadTasks()
+    ElMessage.success(`已清除 ${count} 个任务`)
+  } catch (e: any) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error('清除失败：' + (e?.message || e))
+  } finally {
+    clearing.value = false
   }
 }
 
@@ -216,6 +311,7 @@ let unsubProgress: (() => void) | null = null
 let unsubStatus: (() => void) | null = null
 let unsubQueueState: (() => void) | null = null
 let timer: ReturnType<typeof setInterval> | null = null
+let countdownTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   void loadTasks()
@@ -232,6 +328,11 @@ onMounted(() => {
     const task = tasks.value.find((item) => item.id === data.id)
     if (task) {
       task.status = data.status
+      task.operationMode = data.operationMode ?? task.operationMode
+      task.authorizationState = data.authorizationState ?? task.authorizationState
+      task.coinsSpent = data.coinsSpent ?? task.coinsSpent
+      task.coinBalance = data.coinBalance ?? task.coinBalance
+      task.savePath = data.savePath ?? task.savePath
       task.error = data.error
       task.progress = data.progress ?? task.progress
       task.downloadedBytes = data.downloadedBytes ?? task.downloadedBytes
@@ -248,10 +349,14 @@ onMounted(() => {
   })
   unsubQueueState = api.download.onQueueState(syncQueueState)
   timer = setInterval(loadTasks, 5000)
+  countdownTimer = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 1000)
 })
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  if (countdownTimer) clearInterval(countdownTimer)
   unsubProgress?.()
   unsubStatus?.()
   unsubQueueState?.()
@@ -293,6 +398,15 @@ onUnmounted(() => {
             <el-button size="small" :disabled="completedCount === 0" @click="clearCompleted">
               清除已完成
             </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :icon="Delete"
+              :disabled="clearableCount === 0"
+              :loading="clearing"
+              @click="clearInactive"
+            >一键清除</el-button>
             <el-button size="small" :icon="Refresh" @click="loadTasks" :loading="loading">
               刷新
             </el-button>
@@ -303,12 +417,42 @@ onUnmounted(() => {
       <el-alert
         v-if="paused"
         class="queue-alert"
-        :title="automaticallyPaused ? '下载队列已自动暂停' : '下载队列已暂停'"
+        :title="pauseAlertTitle"
         :description="pauseReason"
-        type="warning"
+        :type="pauseAlertType"
         show-icon
         :closable="false"
-      />
+      >
+        <template #default>
+          <div class="pause-body">
+            <div class="pause-reason">{{ pauseReason }}</div>
+            <div v-if="nextStartCountdown" class="pause-countdown">
+              <span>{{ hourlyResetAt ? '预计恢复倒计时' : '下一次尝试' }}</span>
+              <strong>{{ nextStartCountdown }}</strong>
+            </div>
+            <div v-if="pauseKind === 'anti-bot'" class="pause-actions">
+              <el-button size="small" type="primary" @click="goVerify">前往网页登录验证</el-button>
+            </div>
+          </div>
+        </template>
+      </el-alert>
+
+      <div v-else-if="nextStartLabel || hourlyLimit > 0" class="queue-strip">
+        <div class="queue-strip-left">
+          <span v-if="nextStartLabel" class="next-hint">⏱ {{ nextStartLabel }}</span>
+        </div>
+        <div v-if="hourlyLimit > 0" class="hourly-usage">
+          <span class="meta-label">本小时用量</span>
+          <el-progress
+            :percentage="hourlyPercent"
+            :color="hourlyPercentColor"
+            :stroke-width="6"
+            :show-text="false"
+            style="width: 140px"
+          />
+          <strong>{{ hourlyUsed }} / {{ hourlyLimit }}</strong>
+        </div>
+      </div>
 
       <div v-if="filteredTasks.length === 0" class="empty-pane">
         <el-empty :description="totalCount === 0 ? '暂无下载任务' : '当前筛选下没有任务'">
@@ -329,10 +473,18 @@ onUnmounted(() => {
                 </button>
               </div>
               <el-tag :type="statusTagType[task.status]" size="small">
-                {{ statusLabel[task.status] || task.status }}
+                {{ task.authorizationState === 'waiting' && task.status === 'downloading' ? '等待完成验证码' : task.operationMode === 'unlock' && task.status === 'completed' ? '已授权（未下载）' : task.operationMode === 'unlock' && task.status === 'downloading' ? '授权中' : statusLabel[task.status] || task.status }}
               </el-tag>
             </div>
             <div class="task-meta-grid">
+              <div>
+                <span class="meta-label">任务模式</span>
+                <strong>{{ task.operationMode === 'unlock' ? '仅扣币授权' : '扣币并下载' }}</strong>
+              </div>
+              <div>
+                <span class="meta-label">铜币</span>
+                <strong>{{ task.coinsSpent != null ? '消耗 ' + task.coinsSpent : task.authorizationState === 'unknown' ? '结果待核实' : task.authorizationState === 'authorized' ? '已授权' : '-' }}</strong>
+              </div>
               <div>
                 <span class="meta-label">进度</span>
                 <strong>{{ progressPercent(task) }}%</strong>
@@ -362,7 +514,7 @@ onUnmounted(() => {
                 <strong>{{ formatDate(task.createdAt) }}</strong>
               </div>
             </div>
-            <div class="path-row">
+            <div v-if="task.operationMode !== 'unlock'" class="path-row">
               <span class="meta-label">保存路径</span>
               <span class="path-text">{{ task.savePath || '-' }}</span>
             </div>
@@ -377,6 +529,7 @@ onUnmounted(() => {
           <div class="task-actions">
             <el-button
               v-if="task.status === 'failed'"
+              :disabled="['pending', 'waiting', 'unknown', 'authorized'].includes(task.authorizationState)"
               size="small"
               type="primary"
               @click="retryTask(task)"
@@ -384,6 +537,7 @@ onUnmounted(() => {
               重试
             </el-button>
             <el-button
+              v-if="task.operationMode !== 'unlock'"
               size="small"
               :icon="FolderOpened"
               :disabled="!task.savePath"
@@ -433,6 +587,75 @@ onUnmounted(() => {
 .queue-alert {
   flex-shrink: 0;
   margin-bottom: 12px;
+}
+
+.pause-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pause-reason {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pause-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.pause-countdown strong {
+  color: #303133;
+  font-size: 13px;
+}
+
+.pause-actions {
+  margin-top: 4px;
+}
+
+.queue-strip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  background: #f8fafc;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.queue-strip-left {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.next-hint {
+  color: #409eff;
+}
+
+.hourly-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.hourly-usage strong {
+  color: #303133;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 60px;
+  text-align: right;
 }
 
 .header {

@@ -1,9 +1,9 @@
 import { join } from 'path'
 import { app } from 'electron'
 import { downloadThroughWebPage } from './web-downloader.js'
-import type { DownloadItemInput } from '../shared/types.js'
+import type { AuthorizationResult, DownloadItemInput } from '../shared/types.js'
 
-export interface DownloadResult {
+export interface DownloadResult extends AuthorizationResult {
   success: boolean
   filePath?: string
   error?: string
@@ -20,7 +20,8 @@ export function getDefaultSaveDir(): string {
 export async function downloadItem(
   input: DownloadItemInput,
   targetPath: string,
-  onProgress?: (downloaded: number, total: number, speed: number) => void
+  onProgress?: (downloaded: number, total: number, speed: number) => void,
+  onAuthorization?: (result: AuthorizationResult) => void
 ): Promise<DownloadResult> {
-  return await downloadThroughWebPage(input, targetPath, onProgress)
+  return await downloadThroughWebPage(input, targetPath, onProgress, onAuthorization)
 }

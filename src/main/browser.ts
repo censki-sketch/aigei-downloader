@@ -1,11 +1,12 @@
 import { session } from 'electron'
 import { clearCookies, saveCookie } from './db.js'
 import { log } from './debug-log.js'
+import { AIGEI_ACCEPT_LANGUAGE, AIGEI_ORIGIN, AIGEI_UA } from '../shared/aigei-constants.js'
 import type { LoginStatus } from '../shared/types.js'
 
 const AIGEI_HOST = 'www.aigei.com'
-const AIGEI_URL = 'https://www.aigei.com'
-const AIGEI_HOME_URL = 'https://www.aigei.com/home/'
+const AIGEI_URL = AIGEI_ORIGIN
+const AIGEI_HOME_URL = `${AIGEI_ORIGIN}/home/`
 
 /**
  * 获取爱给网 Cookie 字符串（从 Electron session，webview 登录后自动有）
@@ -31,13 +32,15 @@ export async function checkLoginStatus(): Promise<LoginStatus> {
     const cookieString = await getCookieString()
     if (!cookieString) return { isLoggedIn: false }
 
+    const headers: Record<string, string> = {
+      'User-Agent': AIGEI_UA,
+      'Accept-Language': AIGEI_ACCEPT_LANGUAGE,
+      Referer: AIGEI_ORIGIN + '/'
+    }
+    if (cookieString) headers.Cookie = cookieString
     // 用 session cookie 访问个人中心
     const resp = await fetch(AIGEI_HOME_URL, {
-      headers: {
-        Cookie: cookieString,
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-      },
+      headers,
       redirect: 'manual' // 不自动跟随重定向，手动检查
     })
 

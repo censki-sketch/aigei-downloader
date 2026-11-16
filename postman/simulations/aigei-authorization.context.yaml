@@ -1,0 +1,30 @@
+purpose:
+  stands_in_for: Aigei native /f/d JSON response boundary, not signing or authentication
+  unblocks: Safe caller tests for download versus authorization only, and ambiguous charge results
+assumptions:
+  - id: native-response-boundary
+    status: supported
+    claim: The inspected native client routes statusCode success to fileProcess before initiating file transfer.
+    reason: Authorization-only mode suppresses this transfer and the host persists success before releasing downloads.
+    verification: Read release-20261113074707 JavaScript on 2026-11-16. Local simulation exercised both modes; it does not establish current server behavior with a real account.
+    source: https://cdn-sqn.aigei.com/assets/site/js-release-20261113074707/aigei.js; functions jsInterface_download_proessResultJson, fileProcess, AjaxExProcTipComp; src/main/site-authorization.ts
+    updated_at: '2026-11-16'
+  - id: actual-prompt-wording
+    status: unknown
+    claim: Current server coin confirmations use tip actionButton.action download and explicitly mention copper coins.
+    reason: Native tip action download plus copper consumption wording identifies automatic coin confirmation. VIP promotional copy does not make it a VIP gate. Only verification dialogs wait for manual input.
+    verification: Native tip component action semantics were read; the user supplied screenshots on 2026-11-16 showing copper confirmation with VIP promotional text, and clarified only CAPTCHA should be manual. Tests now cover this distinction in both modes. Fixture wording and values are synthetic; no real spending test was made.
+    source: postman/mocks/aigei/default.js; src/main/site-authorization.ts; provider AjaxExProcTipComp
+    updated_at: '2026-11-16'
+  - id: repeat-charge-idempotency
+    status: unknown
+    claim: Repeating authorization requests after an ambiguous outcome is safe at the provider.
+    reason: No provider guarantee was found, so the caller blocks retries after pending, unknown, or authorized results.
+    verification: Fingerprint local-20261116. Prior runs passed 32 and 48 tests. Final automatic-coins/manual-CAPTCHA run passed all 55 tests on 2026-11-16, including coin prompts with VIP promotion in both modes, CAPTCHA before and after confirmation, waiting beyond the start timeout, and closing/dismissing verification. HTTP simulation verified automatic confirmation followed by manual CAPTCHA in both modes, plus a committed synthetic 25-coin charge with delayed response and no retry. Owner mock discovery skipped because CLI was signed out. No real spending performed.
+    source: tests/web-downloader.test.cjs; tests/queue-authorization.test.cjs; tests/db-authorization.test.cjs
+    updated_at: '2026-11-16'
+fingerprints:
+  - id: local-20261116
+    date: '2026-11-16'
+    commit: f54bc9094a1c81691cce6e841523d94789ea2271 (dirty working tree, including prior user edits)
+    cli: 1.73.0

@@ -35,7 +35,17 @@ export interface ResourcePageResult {
   pages: Array<{ page: number; url: string }>
 }
 
+export type OperationMode = 'download' | 'unlock'
+export type AuthorizationState = 'not-started' | 'pending' | 'waiting' | 'authorized' | 'rejected' | 'unknown'
+
+export interface AuthorizationResult {
+  authorizationState?: AuthorizationState
+  coinsSpent?: number
+  coinBalance?: number
+}
+
 export interface DownloadItemInput {
+  operationMode?: OperationMode
   itemId?: string
   url: string
   title: string
@@ -62,7 +72,8 @@ export interface DownloadItemInput {
   archiveSummary?: Record<string, unknown>
 }
 
-export interface DownloadTask {
+export interface DownloadTask extends AuthorizationResult {
+  operationMode?: OperationMode
   id: string
   itemId: string
   title: string
@@ -119,7 +130,8 @@ export interface ArchiveInspection {
   entries: ArchiveEntry[]
 }
 
-export interface HistoryEntry {
+export interface HistoryEntry extends AuthorizationResult {
+  operationMode?: OperationMode
   id: number
   itemId?: string
   title?: string
@@ -155,12 +167,23 @@ export type DownloadStatus =
   | 'paused'
   | 'queued'
 
+export type QueuePauseKind = 'manual' | 'anti-bot' | 'hourly-limit' | 'task-failure'
+
 export interface DownloadQueueState {
   paused: boolean
   automaticallyPaused: boolean
   pauseReason?: string
+  pauseKind?: QueuePauseKind
   pendingCount: number
   activeCount: number
+  /** 下次允许开始下载的毫秒时间戳；用于前端渲染倒计时 */
+  nextStartAt?: number
+  /** 最近 1 小时已启动的任务数量 */
+  hourlyUsed: number
+  /** 当前每小时上限 (0 = 不限制) */
+  hourlyLimit: number
+  /** 若已达每小时上限，这里是预计可恢复的时间戳 */
+  hourlyResetAt?: number
 }
 
 export interface LoginStatus {
@@ -177,6 +200,7 @@ export interface AppSettings {
   retryCount: number
   retryDelay: number
   requestDelay: number // 每个任务间隔毫秒
+  hourlyLimit: number // 0 = 不限制；>0 = 每小时允许开始的下载任务数
   headless: boolean
 }
 
@@ -186,6 +210,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   retryCount: 3,
   retryDelay: 5000,
   requestDelay: 5000,
+  hourlyLimit: 60,
   headless: false
 }
 
@@ -212,6 +237,7 @@ export const IPC_CHANNELS = {
   DOWNLOAD_CANCEL: 'download:cancel',
   DOWNLOAD_REMOVE: 'download:remove',
   DOWNLOAD_CLEAR_COMPLETED: 'download:clearCompleted',
+  DOWNLOAD_CLEAR_INACTIVE: 'download:clearInactive',
   DOWNLOAD_GET_LIST: 'download:getList',
   DOWNLOAD_PROGRESS: 'download:progress', // 主进程推送进度
   DOWNLOAD_STATUS_CHANGE: 'download:statusChange',

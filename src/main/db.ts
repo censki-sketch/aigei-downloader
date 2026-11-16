@@ -35,6 +35,10 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
   `)
   ensureColumns('tasks', {
+    operationMode: "TEXT DEFAULT 'download'",
+    authorizationState: "TEXT DEFAULT 'not-started'",
+    coinsSpent: 'REAL',
+    coinBalance: 'REAL',
     detailUrl: 'TEXT',
     sourceUrl: 'TEXT',
     previewUrl: 'TEXT',
@@ -89,6 +93,10 @@ export function initDatabase(): void {
   `)
   ensureColumns('history', {
     url: 'TEXT',
+    operationMode: "TEXT DEFAULT 'download'",
+    authorizationState: "TEXT DEFAULT 'not-started'",
+    coinsSpent: 'REAL',
+    coinBalance: 'REAL',
     detailUrl: 'TEXT',
     thumbnail: 'TEXT',
     description: 'TEXT',
@@ -148,6 +156,8 @@ function serializeJson(value: unknown): string | null {
 function hydrateTask(row: Record<string, any>): DownloadTask {
   return {
     ...row,
+    operationMode: row.operationMode || 'download',
+    authorizationState: row.authorizationState || 'not-started',
     categoryPath: parseJson<string[]>(row.categoryPath, []),
     tags: parseJson<string[]>(row.tags, []),
     metadata: parseJson<Record<string, unknown>>(row.metadata, {}),
@@ -158,6 +168,8 @@ function hydrateTask(row: Record<string, any>): DownloadTask {
 function hydrateHistory(row: Record<string, any>): HistoryEntry {
   return {
     ...row,
+    operationMode: row.operationMode || 'download',
+    authorizationState: row.authorizationState || 'not-started',
     categoryPath: parseJson<string[]>(row.categoryPath, []),
     tags: parseJson<string[]>(row.tags, []),
     metadata: parseJson<Record<string, unknown>>(row.metadata, {}),
@@ -179,16 +191,17 @@ export function saveTask(task: DownloadTask): void {
       id, itemId, title, url, fileType, thumbnail, savePath, status, progress, downloadedBytes,
       totalBytes, speed, error, retryCount, createdAt, startedAt, finishedAt, detailUrl, sourceUrl,
       previewUrl, description, category, categoryPath, tags, licenseType, format, duration,
-      downloadCount, uploadTime, author, metadata, extractedPath, extractedAt, archiveEntryCount, archiveSummary
+      downloadCount, uploadTime, author, metadata, extractedPath, extractedAt, archiveEntryCount, archiveSummary, operationMode, authorizationState, coinsSpent, coinBalance
     )
     VALUES (
       @id, @itemId, @title, @url, @fileType, @thumbnail, @savePath, @status, @progress, @downloadedBytes,
       @totalBytes, @speed, @error, @retryCount, @createdAt, @startedAt, @finishedAt, @detailUrl, @sourceUrl,
       @previewUrl, @description, @category, @categoryPath, @tags, @licenseType, @format, @duration,
-      @downloadCount, @uploadTime, @author, @metadata, @extractedPath, @extractedAt, @archiveEntryCount, @archiveSummary
+      @downloadCount, @uploadTime, @author, @metadata, @extractedPath, @extractedAt, @archiveEntryCount, @archiveSummary, @operationMode, @authorizationState, @coinsSpent, @coinBalance
     )
     ON CONFLICT(id) DO UPDATE SET
-      status=excluded.status, progress=excluded.progress, downloadedBytes=excluded.downloadedBytes,
+      savePath=excluded.savePath, operationMode=excluded.operationMode, authorizationState=excluded.authorizationState,
+      coinsSpent=excluded.coinsSpent, coinBalance=excluded.coinBalance, status=excluded.status, progress=excluded.progress, downloadedBytes=excluded.downloadedBytes,
       totalBytes=excluded.totalBytes, speed=excluded.speed, error=excluded.error,
       retryCount=excluded.retryCount, startedAt=excluded.startedAt, finishedAt=excluded.finishedAt,
       detailUrl=excluded.detailUrl, sourceUrl=excluded.sourceUrl, previewUrl=excluded.previewUrl,
@@ -198,6 +211,8 @@ export function saveTask(task: DownloadTask): void {
       metadata=excluded.metadata, extractedPath=excluded.extractedPath, extractedAt=excluded.extractedAt,
       archiveEntryCount=excluded.archiveEntryCount, archiveSummary=excluded.archiveSummary
   `).run({
+    operationMode: task.operationMode || 'download', authorizationState: task.authorizationState || 'not-started',
+    coinsSpent: task.coinsSpent ?? null, coinBalance: task.coinBalance ?? null,
     id: task.id, itemId: task.itemId, title: task.title, url: task.url,
     fileType: task.fileType, thumbnail: task.thumbnail, savePath: task.savePath,
     status: task.status, progress: task.progress, downloadedBytes: task.downloadedBytes,
@@ -266,54 +281,37 @@ export function getAllSettings(): AppSettings {
   const rows = getDb().prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[]
   const map: Record<string, string> = {}
   for (const r of rows) map[r.key] = r.value
+  const hourlyLimitRaw = map.hourlyLimit
+  const hourlyLimit = hourlyLimitRaw === undefined || hourlyLimitRaw === ''
+    ? DEFAULT_SETTINGS.hourlyLimit
+    : Math.max(0, Math.floor(Number(hourlyLimitRaw)))
   return {
     downloadDir: map.downloadDir || DEFAULT_SETTINGS.downloadDir,
     maxConcurrent: Number(map.maxConcurrent) || DEFAULT_SETTINGS.maxConcurrent,
     retryCount: Number(map.retryCount) || DEFAULT_SETTINGS.retryCount,
     retryDelay: Number(map.retryDelay) || DEFAULT_SETTINGS.retryDelay,
     requestDelay: Number(map.requestDelay) || DEFAULT_SETTINGS.requestDelay,
+    hourlyLimit: Number.isFinite(hourlyLimit) ? hourlyLimit : DEFAULT_SETTINGS.hourlyLimit,
     headless: map.headless === 'true'
   }
 }
 
 // ===== 历史 =====
-export function addHistory(entry: {
-  itemId: string
-  title: string
-  filePath: string
-  fileSize?: number
-  fileType?: string
-  url?: string
-  detailUrl?: string
-  thumbnail?: string
-  description?: string
-  category?: string
-  categoryPath?: string[]
-  tags?: string[]
-  licenseType?: string
-  format?: string
-  duration?: string
-  downloadCount?: string
-  uploadTime?: string
-  author?: string
-  metadata?: Record<string, unknown>
-  extractedPath?: string
-  extractedAt?: number
-  archiveEntryCount?: number
-  archiveSummary?: Record<string, unknown>
-}): void {
+export function addHistory(entry: Omit<HistoryEntry, 'id'>): void {
   getDb().prepare(`
     INSERT INTO history (
       itemId, title, filePath, fileSize, fileType, url, detailUrl, thumbnail, description, category,
       categoryPath, tags, licenseType, format, duration, downloadCount, uploadTime, author, metadata,
-      extractedPath, extractedAt, archiveEntryCount, archiveSummary
+      extractedPath, extractedAt, archiveEntryCount, archiveSummary, operationMode, authorizationState, coinsSpent, coinBalance
     )
     VALUES (
       @itemId, @title, @filePath, @fileSize, @fileType, @url, @detailUrl, @thumbnail, @description, @category,
       @categoryPath, @tags, @licenseType, @format, @duration, @downloadCount, @uploadTime, @author, @metadata,
-      @extractedPath, @extractedAt, @archiveEntryCount, @archiveSummary
+      @extractedPath, @extractedAt, @archiveEntryCount, @archiveSummary, @operationMode, @authorizationState, @coinsSpent, @coinBalance
     )
   `).run({
+    operationMode: entry.operationMode || 'download', authorizationState: entry.authorizationState || 'not-started',
+    coinsSpent: entry.coinsSpent ?? null, coinBalance: entry.coinBalance ?? null,
     itemId: entry.itemId, title: entry.title, filePath: entry.filePath,
     fileSize: entry.fileSize || null, fileType: entry.fileType || null,
     url: entry.url || entry.detailUrl || null, detailUrl: entry.detailUrl || entry.url || null,

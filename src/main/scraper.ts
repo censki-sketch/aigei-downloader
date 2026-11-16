@@ -1,8 +1,10 @@
 import { getCookieString } from './browser.js'
+import { log } from './debug-log.js'
+import { parse, type HTMLElement } from 'node-html-parser'
 import type { ResourceItem, ResourcePageResult } from '../shared/types.js'
-import { withAigeiServerDownloadFilter } from '../shared/aigei-filter.js'
+import { AIGEI_ACCEPT_LANGUAGE, AIGEI_ORIGIN, AIGEI_UA } from '../shared/aigei-constants.js'
 
-const AIGEI_URL = 'https://www.aigei.com'
+const AIGEI_URL = AIGEI_ORIGIN
 const DETAIL_CACHE_TTL = 30 * 60 * 1000
 const DETAIL_REQUEST_DELAY_MIN = 2000
 const DETAIL_REQUEST_DELAY_MAX = 4000
@@ -26,41 +28,65 @@ export async function scrapeListPage(listUrl: string): Promise<ResourceItem[]> {
 }
 
 export async function scrapeResourcePage(listUrl: string): Promise<ResourcePageResult> {
-  const normalizedUrl = normalizeUrl(listUrl, AIGEI_URL) || listUrl
-  const targetUrl = withAigeiServerDownloadFilter(normalizedUrl)
+  const targetUrl = normalizeUrl(listUrl, AIGEI_URL) || listUrl
   const html = await fetchAigeiHtml(targetUrl)
   assertNotSecurityCheckPage(html)
-  const items = parseResourceList(html, targetUrl)
-  return { items, currentUrl: targetUrl, ...parsePagination(html, targetUrl) }
+  return parseResourcePage(html, targetUrl)
 }
 
-function parsePagination(html: string, currentUrl: string): Omit<ResourcePageResult, 'items' | 'currentUrl'> {
-  const currentPage = extractPageNumber(currentUrl) || 1
-  let previousUrl = currentPage > 1 ? buildPageUrl(currentUrl, currentPage - 1) : undefined
-  let nextUrl = buildPageUrl(currentUrl, currentPage + 1)
-  const anchorRegex = /<a\b([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi
-  let match
+/** Parse only the current resource list; navigation and recommendations are not resources. */
+export function parseResourcePage(html: string, currentUrl: string): ResourcePageResult {
+  const root = parse(html)
+  const container = root.querySelector('#searchContainer') || root.querySelector('#resContainer')
+  const items = container ? parseResourceList(container, currentUrl) : []
+  return { items, currentUrl, ...parsePagination(root, currentUrl) }
+}
 
-  while ((match = anchorRegex.exec(html)) !== null) {
-    const attrs = `${match[1]} ${match[3]}`
-    const text = stripHtml(match[4])
-    if (!/上一页|下一页|\bprev\b|\bnext\b/i.test(`${text} ${attrs}`)) continue
-    const url = normalizeUrl(match[2], currentUrl)
-    if (!url) continue
-    if (/上一页|prev/i.test(`${text} ${attrs}`)) previousUrl = url
-    if (/下一页|next/i.test(`${text} ${attrs}`)) nextUrl = url
+function parsePagination(root: HTMLElement, currentUrl: string): Omit<ResourcePageResult, 'items' | 'currentUrl'> {
+  const currentPage = Number(root.querySelector('.pageInfo_currentPage')?.text.trim()) || extractPageNumber(currentUrl) || 1
+  const totalPages = Number(root.querySelector('.pageInfo_totalPage')?.text.trim()) || undefined
+  const pages = new Map<number, string>([[currentPage, currentUrl]])
+  let previousUrl: string | undefined
+  let nextUrl: string | undefined
+
+  const container = root.querySelector('#resContainer')
+  for (const button of container?.querySelectorAll('.f-pager a, .js-page-tag-btn, .pagination a, .pager a') || []) {
+    if (button.classList.contains('disabled')) continue
+    const label = `${button.text} ${button.getAttribute('title') || ''} ${button.getAttribute('class') || ''}`
+    const href = normalizeUrl(button.getAttribute('href') || '', currentUrl)
+    const page = Number(button.getAttribute('js-param-pagenum') ||
+      button.getAttribute('js-page-tag-onclick')?.match(/clickChangePageNum\(['"](\d+)['"]/)?.[1]) ||
+      (href ? extractPageNumber(href) : undefined)
+    if (!page || page < 1) continue
+    const url = href || buildPageUrl(currentUrl, page)
+    pages.set(page, url)
+    if (/上一页|prev/i.test(label)) previousUrl = url
+    if (/下一页|next/i.test(label)) nextUrl = url
+  }
+  if (totalPages) {
+    previousUrl = currentPage > 1 ? buildPageUrl(currentUrl, currentPage - 1) : undefined
+    nextUrl = currentPage < totalPages ? buildPageUrl(currentUrl, currentPage + 1) : undefined
   }
 
   return {
     currentPage,
+    totalPages,
     previousUrl,
     nextUrl,
-    pages: [{ page: currentPage, url: currentUrl }]
+    pages: [...pages].sort(([a], [b]) => a - b).map(([page, url]) => ({ page, url }))
   }
 }
 
 function buildPageUrl(currentUrl: string, page: number): string {
-  const url = new URL(currentUrl, AIGEI_URL)
+  let url: URL
+  try {
+    url = new URL(currentUrl, AIGEI_URL)
+  } catch {
+    url = new URL(AIGEI_URL)
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    url = new URL(AIGEI_URL)
+  }
   if (page <= 1) url.searchParams.delete('page')
   else url.searchParams.set('page', String(page))
   return url.toString()
@@ -68,77 +94,82 @@ function buildPageUrl(currentUrl: string, page: number): string {
 
 function extractPageNumber(url: string): number | undefined {
   try {
-    const parsed = new URL(url)
+    const parsed = new URL(url, AIGEI_URL)
     for (const key of ['page', 'p', 'pageNo', 'pageNum']) {
       const value = Number(parsed.searchParams.get(key))
       if (Number.isInteger(value) && value > 0) return value
     }
+    // 只认真正的"页码段"：/page-4/、/page_4/、/page/4/、以及明确的 _p4 / -p4 结尾
+    const pathMatch = parsed.pathname.match(
+      /(?:^|\/)(?:page|p|pg)[-_/]?(\d+)(?:[/-]|\.html)?(?:$|\/)/i
+    )
+    if (pathMatch) {
+      const value = Number(pathMatch[1])
+      if (Number.isInteger(value) && value > 0) return value
+    }
   } catch {
-    // Fall through to path parsing.
+    // ignore malformed URL
   }
-  const pathPage = url.match(/(?:\/|_|-)(\d+)(?:\.html)?(?:[/?#]|$)/)?.[1]
-  const value = Number(pathPage)
-  return Number.isInteger(value) && value > 0 ? value : undefined
+  return undefined
 }
 
-function parseResourceList(html: string, baseUrl: string): ResourceItem[] {
+function parseResourceList(container: HTMLElement, baseUrl: string): ResourceItem[] {
   const results: ResourceItem[] = []
   const seen = new Set<string>()
-  const linkRegex = /href\s*=\s*["']([^"']*\/(?:item|sound|music|video|3d|design|image|psd|game|course|software)\/[^"']+\.html[^"']*)["']/gi
-  let match
+  const cards = container.querySelectorAll('[id^="unitBox_item-"]')
 
-  while ((match = linkRegex.exec(html)) !== null) {
-    const url = normalizeUrl(match[1], baseUrl)
-    if (!url || seen.has(url) || isNoiseLink(url)) continue
-    seen.add(url)
+  for (const card of cards) {
+    const itemId = card.getAttribute('itemid') || card.id.replace('unitBox_item-', '')
+    if (!itemId || seen.has(itemId)) continue
+    const code = card.getAttribute('js-item-code')
+    const link = card.querySelector('.item-view-url a')
+    // Some archive cards have no anchor. Their item code is still a valid detail URL.
+    const url = normalizeUrl(link?.getAttribute('href') || (code ? `/item/${encodeURIComponent(code)}.html` : ''), baseUrl)
+    if (!url) continue
+    seen.add(itemId)
 
-    const itemId = extractItemId(url)
+    const context = card.outerHTML
+    const name = card.querySelector('.resc-info-bottom-info-name')
+    const title = cleanResourceTitle(name?.getAttribute('title') ||
+      card.querySelector('.trans-title')?.text || link?.getAttribute('title') || link?.text || itemId)
     const fileType = inferFileType(url, baseUrl)
-    const context = getLinkContext(html, match.index)
-    const anchorHtml = getAnchorHtml(html, match.index)
-    const title = cleanResourceTitle(
-      stripHtml(anchorHtml.match(/<a[^>]*>([\s\S]*?)<\/a>/i)?.[1]) ||
-        extractAttribute(anchorHtml, 'title') ||
-        extractAttribute(context, 'title') ||
-        extractAttribute(context, 'alt') ||
-        itemId
-    )
     const description = extractDescription(context)
-    const thumbnail = extractImageUrl(context, baseUrl)
     const tags = uniqueTexts([
       ...extractTagTexts(context),
       ...extractTagsFromDescription(description),
       ...extractTagsFromTitle(title)
     ])
-    const categoryPath = inferCategoryPath(url, baseUrl, context, tags)
-    const licenseType = extractLicenseType(context)
+    const categoryPath = inferCategoryPath(url, baseUrl, '', tags, title)
+    // The "vip" wrapper class exists even on free cards. Only an explicit marker is evidence.
+    const isVip = !!card.querySelector('[js-unit-isvip="true"]')
+    const licenseType = isVip ? 'VIP' : extractLicenseType(card.querySelector('.js-item-box-license-mark-wrap')?.text || '')
+    const size = card.querySelector('.item-info-bottom-file-size')
 
     results.push({
       itemId,
       title,
-      thumbnail,
+      thumbnail: extractImageUrl(card.querySelector('.mpic')?.outerHTML || context, baseUrl),
       url,
       detailUrl: url,
       sourceUrl: baseUrl,
-      isVip: licenseType === 'VIP' || /vip/i.test(context),
+      isVip,
       fileType,
-      size: extractSize(context),
+      size: cleanText(size?.text) || extractSize(size?.getAttribute('title') || ''),
       previewUrl: extractMediaUrl(context, baseUrl),
       description,
       category: categoryPath[0],
       categoryPath,
       tags,
       licenseType,
-      format: extractFormat(context, title),
-      duration: extractDuration(context),
-      downloadCount: extractDownloadCount(context),
-      uploadTime: extractUploadTime(context),
-      metadata: {
-        source: 'list'
-      }
+      format: cleanText(card.querySelector('.format_desc')?.text)?.toUpperCase() || extractFormat('', title),
+      duration: extractDuration(card.text),
+      downloadCount: cleanText(card.querySelector('.item-info-bottom-down')?.text),
+      uploadTime: extractUploadTime(card.text),
+      metadata: { source: 'list' }
     })
   }
 
+  log('SCRAPE', `parseResourceList: cards=${cards.length} kept=${results.length}`)
   return results
 }
 
@@ -170,7 +201,9 @@ async function scrapeItemPageUncached(targetUrl: string): Promise<ItemPageData> 
     return html.match(regex)?.[1] || ''
   }
 
-  const itemId = extractItemId(targetUrl)
+  const detailRoot = parse(html)
+  const itemId = detailRoot.querySelector('.item-page-prev-container[itemid]')?.getAttribute('itemid') ||
+    detailRoot.querySelector('input[id^=itemInfoToken_][itemid]')?.getAttribute('itemid') || extractItemId(targetUrl)
   const jsonLd = extractJsonLd(html)
   const metaTitle = cleanResourceTitle(
     stringValue(jsonLd?.name) ||
@@ -258,14 +291,33 @@ function wait(ms: number): Promise<void> {
 }
 
 async function fetchAigeiHtml(url: string): Promise<string> {
+  let parsed: URL
+  try {
+    parsed = new URL(url, AIGEI_URL)
+  } catch {
+    throw new Error(`抓取请求失败 (无法解析 URL: ${url})`)
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`抓取请求失败 (非法协议 ${parsed.protocol}，期望 https)`)
+  }
+  const safeUrl = parsed.toString()
   const cookieString = await getCookieString()
-  const resp = await fetch(url, {
-    headers: {
-      Cookie: cookieString,
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-    }
-  })
+  const headers: Record<string, string> = {
+    'User-Agent': AIGEI_UA,
+    'Accept-Language': AIGEI_ACCEPT_LANGUAGE,
+    Accept:
+      'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    Referer: AIGEI_ORIGIN + '/'
+  }
+  if (cookieString) headers.Cookie = cookieString
+  let resp: Response
+  try {
+    resp = await fetch(safeUrl, { headers })
+  } catch (err: any) {
+    const cause = err?.cause
+    const detail = cause?.code || cause?.message || cause?.name || err?.message || String(err)
+    throw new Error(`抓取请求失败 (${detail}) URL=${safeUrl}`)
+  }
   const html = await resp.text()
   if (isIpLimitedPage(resp.url, html)) {
     throw new Error('爱给网已限制当前 IP 的访问频率，抓取和下载已停止，请等待限制解除后再继续')
@@ -309,34 +361,13 @@ function isIpLimitedPage(url: string, html: string): boolean {
     /休息会.*将在\s*\d+\s*秒后回来|访问过于频繁|IP地址.*(?:限制|频繁)|限制访问频率/.test(text)
 }
 
-function getLinkContext(html: string, index: number): string {
-  const startCandidates = [
-    html.lastIndexOf('<li', index),
-    html.lastIndexOf('<tr', index),
-    html.lastIndexOf('<div', index),
-    Math.max(0, index - 1800)
-  ].filter((value) => value >= 0)
-  const start = Math.max(0, Math.max(...startCandidates))
-  const endCandidates = [
-    html.indexOf('</li>', index),
-    html.indexOf('</tr>', index),
-    html.indexOf('</div>', index)
-  ].filter((value) => value >= 0)
-  const end = endCandidates.length > 0 ? Math.min(...endCandidates) + 6 : index + 2400
-  return html.substring(start, Math.min(html.length, end + 1800))
-}
-
-function getAnchorHtml(html: string, index: number): string {
-  const start = html.lastIndexOf('<a', index)
-  const end = html.indexOf('</a>', index)
-  if (start < 0 || end < 0) return ''
-  return html.substring(start, end + 4)
-}
-
 function normalizeUrl(url: string, baseUrl: string): string {
   if (!url) return ''
+  const trimmed = decodeHtml(url).trim()
+  if (!trimmed || /^(?:javascript|data|mailto|tel|about|blob|file):/i.test(trimmed)) return ''
   try {
-    const normalized = new URL(decodeHtml(url), baseUrl)
+    const normalized = new URL(trimmed, baseUrl)
+    if (normalized.protocol !== 'http:' && normalized.protocol !== 'https:') return ''
     normalized.hash = ''
     return normalized.toString()
   } catch {
@@ -344,19 +375,18 @@ function normalizeUrl(url: string, baseUrl: string): string {
   }
 }
 
-function isNoiseLink(url: string): boolean {
-  return /\/(?:about|faq|poster|home|user|class)(?:\/|\?|$)|\/(?:index)\.html/i.test(url)
-}
-
 function extractItemId(url: string): string {
-  return url.match(/\/(?:item|sound|music|video|3d|design|image|psd|game|course|software)\/([^/?#.]+)\.html/i)?.[1] || url
+  return (
+    url.match(/\/(?:item|sound|music|video|3d|design|image|psd|game|course|software|ue|unity3d|game2d|game-code|cc-game|paint)\/([^/?#.]+)(?:\.html)?/i)?.[1] ||
+    url
+  )
 }
 
 function inferFileType(url: string, baseUrl: string, html = ''): string {
-  const fromUrl = url.match(/\/(sound|music|video|3d|design|image|psd|game|course|software)\//i)?.[1]
+  const fromUrl = url.match(/\/(sound|music|video|3d|design|image|psd|game|course|software|ue|unity3d|game2d|game-code|cc-game|paint)\//i)?.[1]
   if (fromUrl) return normalizeFileType(fromUrl)
 
-  const fromBaseUrl = baseUrl.match(/\/(sound|music|video|3d|design|image|psd|game|course|software)\//i)?.[1]
+  const fromBaseUrl = baseUrl.match(/\/(sound|music|video|3d|design|image|psd|game|course|software|ue|unity3d|game2d|game-code|cc-game|paint)\//i)?.[1]
   if (fromBaseUrl) return normalizeFileType(fromBaseUrl)
 
   const fromScript =
@@ -406,7 +436,7 @@ function inferCategory(source: string): string {
     [/\/3d\/|3D|模型/i, '3D'],
     [/\/design\/|\/psd\/|平面|设计素材/i, '平面'],
     [/\/image\/|图片素材/i, '图片'],
-    [/\/game\/|游戏素材/i, '游戏'],
+    [/\/(?:game|ue|unity3d|game2d|game-code|cc-game|paint)\/|游戏素材/i, '游戏'],
     [/\/course\/|教程/i, '教程'],
     [/\/software\/|软件/i, '软件']
   ]

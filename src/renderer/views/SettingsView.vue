@@ -10,7 +10,8 @@ const form = reactive({
   maxConcurrent: 2,
   retryCount: 3,
   retryDelay: 5,
-  requestDelay: 5
+  requestDelay: 5,
+  hourlyLimit: 60
 })
 
 const defaultSaveDir = ref('')
@@ -32,6 +33,10 @@ const loadSettings = async () => {
     form.retryCount = Number((await api.settings.get('retryCount')) || 3)
     form.retryDelay = toSeconds(await api.settings.get('retryDelay'), 5)
     form.requestDelay = toSeconds(await api.settings.get('requestDelay'), 5)
+    const hourlyRaw = await api.settings.get('hourlyLimit')
+    form.hourlyLimit = hourlyRaw === null || hourlyRaw === undefined || hourlyRaw === ''
+      ? 60
+      : Math.max(0, Math.floor(Number(hourlyRaw)))
     debugMode.value = await api.debug.getMode()
     logPath.value = await api.debug.getLogPath()
   } finally {
@@ -47,7 +52,7 @@ const save = async () => {
     await api.settings.set('retryCount', String(form.retryCount))
     await api.settings.set('retryDelay', String(form.retryDelay * 1000))
     await api.settings.set('requestDelay', String(form.requestDelay * 1000))
-    await api.download.setConcurrent(form.maxConcurrent)
+    await api.settings.set('hourlyLimit', String(form.hourlyLimit))
     ElMessage.success('设置已保存')
   } finally {
     loading.value = false
@@ -83,6 +88,7 @@ const resetDefault = async () => {
   form.retryCount = 3
   form.retryDelay = 5
   form.requestDelay = 5
+  form.hourlyLimit = 60
   await save()
 }
 
@@ -126,8 +132,14 @@ onMounted(() => {
             </el-form-item>
 
             <el-form-item label="最大并发数">
-              <el-input-number v-model="form.maxConcurrent" :min="1" :max="5" />
-              <span class="hint inline">建议 2-3，过高可能触发网站风控</span>
+              <el-input-number v-model="form.maxConcurrent" :min="1" :max="2" />
+              <span class="hint inline">爱给网建议 1，最多 2；更高会被软件强制下调</span>
+            </el-form-item>
+
+            <el-form-item label="每小时上限">
+              <el-input-number v-model="form.hourlyLimit" :min="0" :max="500" />
+              <span class="unit">个/小时</span>
+              <span class="hint inline">0 = 不限；达到上限自动暂停并倒计时恢复</span>
             </el-form-item>
 
             <el-form-item label="重试次数">

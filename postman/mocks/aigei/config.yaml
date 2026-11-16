@@ -1,0 +1,11 @@
+version: 1
+id: c7829294-4fa9-4448-ad74-2b4fc3126572
+name: aigei
+slug: aigei
+protocol: http
+interceptRequests: true
+port: 4500
+scenarios:
+  - name: default
+    path: ./default.js
+    default: true

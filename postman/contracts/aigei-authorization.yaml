@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: Aigei native download authorization (observed subset)
+  version: 0.1.0
+  description: >-
+    Response fields and confirm flow read from the website's JavaScript bundle
+    aigei.js release-20261113074707. This is not a published provider API contract.
+    Real requests are signed by the native page; this fixture does not model
+    encryption, cookies, signatures, or durable ownership.
+paths:
+  /f/d:
+    post:
+      summary: Native authorization response boundary
+      responses:
+        '200':
+          description: Native JSON result, including success or ajaxExProc instructions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  statusCode: { type: string }
+                  message: { type: string }
+                  consumeFundRemain: { type: number }
+                  consumeFundValue:
+                    type: object
+                    properties:
+                      fundType: { type: string }
+                      value: { type: number }
+                  ajaxExProc:
+                    type: object
+                    properties:
+                      procCompType: { type: string }
+                      title: { type: string }
+                      content: { type: string }
+                      actionButton:
+                        type: object
+                        properties:
+                          action: { type: string }

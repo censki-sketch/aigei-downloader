@@ -1,0 +1,7 @@
+simulation: aigei-authorization
+routing: path
+mocks:
+  - name: aigei
+    routeKey: aigei
+    origin: [www.aigei.com]
+    path: postman/mocks/aigei/config.yaml

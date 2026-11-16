@@ -37,6 +37,7 @@ const hasBeenExtracted = (row: any): boolean => Boolean(row?.extractedAt && row?
 const searchableText = (row: any): string => {
   return [
     row.title,
+    row.operationMode === 'unlock' ? '仅扣币授权 未下载' : '扣币并下载',
     row.fileType,
     row.format,
     row.duration,
@@ -245,6 +246,8 @@ onMounted(() => {
                 </button>
                 <div v-if="row.detailUrl || row.url" class="url-text">{{ row.detailUrl || row.url }}</div>
                 <div class="tag-line">
+                  <el-tag size="small" effect="plain">{{ row.operationMode === 'unlock' ? '已授权（未下载）' : '已下载' }}</el-tag>
+                  <el-tag v-if="row.coinsSpent != null" size="small" type="warning" effect="plain">消耗 {{ row.coinsSpent }} 铜币</el-tag>
                   <el-tag v-if="categoryText(row) !== '-'" size="small" type="success" effect="plain">
                     {{ categoryText(row) }}
                   </el-tag>
@@ -263,14 +266,14 @@ onMounted(() => {
                 <span><em>时长</em><strong>{{ row.duration || '-' }}</strong></span>
                 <span><em>大小</em><strong>{{ formatBytes(row.fileSize || row.totalBytes) }}</strong></span>
                 <span><em>文件数</em><strong>{{ row.archiveEntryCount || row.archiveSummary?.fileCount || '-' }}</strong></span>
-                <span><em>下载时间</em><strong>{{ formatDate(row.createdAt || row.finishedAt) }}</strong></span>
+                <span><em>完成时间</em><strong>{{ formatDate(row.createdAt || row.finishedAt) }}</strong></span>
               </div>
             </template>
           </el-table-column>
           <el-table-column label="保存路径" min-width="300">
             <template #default="{ row }">
               <div class="path-cell">
-                <span class="path-text">{{ getPath(row) || '-' }}</span>
+                <span class="path-text">{{ row.operationMode === 'unlock' ? '仅完成网站授权，未下载文件' : getPath(row) || '-' }}</span>
                 <span v-if="hasBeenExtracted(row)" class="path-text extracted">已解压：{{ row.extractedPath }}</span>
               </div>
             </template>
@@ -278,7 +281,7 @@ onMounted(() => {
           <el-table-column label="操作" width="230" fixed="right">
             <template #default="{ row }">
               <div class="row-actions">
-                <el-button size="small" :icon="FolderOpened" @click="openLocation(row)">位置</el-button>
+                <el-button v-if="getPath(row)" size="small" :icon="FolderOpened" @click="openLocation(row)">位置</el-button>
                 <el-button v-if="isArchive(row)" size="small" :icon="View" @click="inspectHistoryArchive(row)">内容</el-button>
                 <el-button
                   v-if="isArchive(row)"
@@ -292,7 +295,7 @@ onMounted(() => {
                   解压
                 </el-button>
                 <el-button v-if="hasBeenExtracted(row)" size="small" :icon="Files" @click="openExtractedPath(row)">目录</el-button>
-                <el-button size="small" :icon="CopyDocument" @click="copyPath(row)">复制</el-button>
+                <el-button v-if="getPath(row)" size="small" :icon="CopyDocument" @click="copyPath(row)">复制</el-button>
               </div>
             </template>
           </el-table-column>

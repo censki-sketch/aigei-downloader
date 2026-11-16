@@ -39,7 +39,12 @@ app.whenReady().then(async () => {
   const settings = getAllSettings()
   downloadQueue.setMaxConcurrent(settings.maxConcurrent)
   downloadQueue.setRetryLimit(settings.retryCount)
+  downloadQueue.setRetryDelay(settings.retryDelay)
   downloadQueue.setRequestDelay(settings.requestDelay)
+  downloadQueue.setHourlyLimit(settings.hourlyLimit)
+
+  // 把上次会话里残留的 pending / downloading 任务重新塞回内存队列
+  downloadQueue.rehydrateFromDb()
 
   // 注册 IPC 处理器
   registerIpcHandlers(ipcMain)

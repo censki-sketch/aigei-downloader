@@ -4,18 +4,19 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, Download, Filter, Link, Picture, Refresh, Search, User, VideoPlay } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import type { DownloadItemInput, ResourcePageResult } from '../../shared/types'
-import { withAigeiServerDownloadFilter } from '../../shared/aigei-filter'
+import type { DownloadItemInput, OperationMode, ResourcePageResult } from '../../shared/types'
 
 defineOptions({ name: 'BrowserView' })
 
 const router = useRouter()
 const loading = ref(false)
-const DEFAULT_LIST_URL = 'https://www.aigei.com/sound/cc/is_vip_false/'
+const DEFAULT_LIST_URL = 'https://www.aigei.com/sound/cc/'
 const urlInput = ref(DEFAULT_LIST_URL)
 const keyword = ref('')
 const resources = ref<any[]>([])
 const selected = ref<any[]>([])
+const operationMode = ref<OperationMode>('download')
+const operationLabel = computed(() => operationMode.value === 'unlock' ? '仅扣币授权' : '扣币并下载')
 const pageInfo = ref<ResourcePageResult | null>(null)
 const advancedFilterVisible = ref(false)
 const advancedFilterUrl = ref(DEFAULT_LIST_URL)
@@ -24,23 +25,17 @@ const advancedFilterLoading = ref(false)
 const advancedFilterWebviewRef = ref<any>(null)
 let hasAutoScraped = false
 let unsubLoginSuccess: (() => void) | null = null
-const pageCache = new Map<string, ResourcePageResult>()
+let scrapeRequestId = 0
 
 const categories = reactive([
-  { name: '音效', url: 'https://www.aigei.com/sound/cc/is_vip_false/', matchPath: '/sound/' },
-  { name: '配乐', url: 'https://www.aigei.com/music/class/is_vip_false/', matchPath: '/music/class/' },
-  { name: '视频', url: 'https://www.aigei.com/video/index/is_vip_false/', matchPath: '/video/index/' },
-  { name: '3D', url: 'https://www.aigei.com/3d/model/is_vip_false/', matchPath: '/3d/model/' },
-  { name: '平面', url: 'https://www.aigei.com/design/index/is_vip_false/', matchPath: '/design/index/' },
-  { name: '游戏', url: 'https://www.aigei.com/game/index/?term=is_vip_false', matchPath: '/game/index/' },
-  { name: '教程', url: 'https://www.aigei.com/course/all/?term=is_vip_false', matchPath: '/course/all/' }
+  { name: '音效', url: 'https://www.aigei.com/sound/cc/', matchPath: '/sound/' },
+  { name: '配乐', url: 'https://www.aigei.com/music/class/', matchPath: '/music/class/' },
+  { name: '视频', url: 'https://www.aigei.com/video/index/', matchPath: '/video/index/' },
+  { name: '3D', url: 'https://www.aigei.com/3d/model/', matchPath: '/3d/model/' },
+  { name: '平面', url: 'https://www.aigei.com/design/index/', matchPath: '/design/index/' },
+  { name: '游戏', url: 'https://www.aigei.com/game/index/', matchPath: '/game/index/' },
+  { name: '教程', url: 'https://www.aigei.com/course/all/', matchPath: '/course/all/' }
 ])
-
-const filteredResources = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return resources.value
-  return resources.value.filter((row) => searchableText(row).includes(kw))
-})
 
 const activeCategory = computed(() => {
   const current = normalizeAigeiUrl(pageInfo.value?.currentUrl || urlInput.value)
@@ -51,24 +46,23 @@ const activeCategory = computed(() => {
   })?.name || ''
 })
 
-const scrape = async (url?: string, options: { silent?: boolean; force?: boolean } = {}) => {
+const scrape = async (url?: string, options: { silent?: boolean } = {}) => {
   const targetUrl = normalizeAigeiUrl(url || urlInput.value)
   if (!targetUrl) {
     ElMessage.warning('请输入资源列表页 URL')
     return
   }
-  if (loading.value) return
+  const requestId = ++scrapeRequestId
   loading.value = true
+  resources.value = []
+  selected.value = []
+  pageInfo.value = null
   try {
     urlInput.value = targetUrl
     advancedFilterUrl.value = targetUrl
     advancedFilterCurrentUrl.value = targetUrl
-    let result = !options.force ? pageCache.get(targetUrl) : undefined
-    if (!result) {
-      result = await api.scrape.page(targetUrl)
-      pageCache.set(result.currentUrl, result)
-      pageCache.set(targetUrl, result)
-    }
+    const result = await api.scrape.page(targetUrl)
+    if (requestId !== scrapeRequestId) return
     resources.value = result.items
     pageInfo.value = result
     urlInput.value = result.currentUrl
@@ -79,6 +73,7 @@ const scrape = async (url?: string, options: { silent?: boolean; force?: boolean
       ElMessage.success(`抓取到 ${resources.value.length} 个资源`)
     }
   } catch (e: any) {
+    if (requestId !== scrapeRequestId) return
     const message = e?.message || '未知错误'
     if (/安全验证|验证码|访问验证/.test(message)) {
       if (!options.silent) ElMessage.warning(message)
@@ -87,7 +82,7 @@ const scrape = async (url?: string, options: { silent?: boolean; force?: boolean
       ElMessage.error('抓取失败: ' + message)
     }
   } finally {
-    loading.value = false
+    if (requestId === scrapeRequestId) loading.value = false
   }
 }
 
@@ -99,7 +94,7 @@ const goToPage = async (url?: string) => {
 const normalizeAigeiUrl = (value: string): string => {
   try {
     const url = new URL(value || DEFAULT_LIST_URL, DEFAULT_LIST_URL)
-    return withAigeiServerDownloadFilter(url.toString())
+    return url.toString()
   } catch {
     return DEFAULT_LIST_URL
   }
@@ -111,7 +106,7 @@ const inferSearchType = (value: string): string => {
     const fromQuery = url.searchParams.get('type')
     if (fromQuery) return fromQuery
     if (/^\/sound\/cc(?:\/|$)/i.test(url.pathname)) return 'cc_sound'
-    const match = url.pathname.match(/\/(sound|music|video|3d|design|image|psd|game|course|software)\//i)
+    const match = url.pathname.match(/\/(sound|music|video|3d|design|image|psd|game|course|software|ue|unity3d|game2d|game-code|cc-game|paint)\//i)
     return match?.[1]?.toLowerCase() === 'psd' ? 'design' : match?.[1]?.toLowerCase() || 'sound'
   } catch {
     return 'sound'
@@ -352,8 +347,8 @@ const downloadSelected = async () => {
   }
   try {
     await ElMessageBox.confirm(
-      `确定要下载选中的 ${selected.value.length} 个资源吗？`,
-      '确认下载',
+      `对选中的 ${selected.value.length} 个资源执行“${operationLabel.value}”？将自动确认铜币消费，遇到验证码时会显示爱给原生窗口，免费资源不扣币。`,
+      '确认任务',
       { type: 'info' }
     )
     const items = selected.value.map(resourceToDownloadInput).filter((item) => item.url)
@@ -377,6 +372,7 @@ const downloadOne = async (row: any) => {
 
 const resourceToDownloadInput = (row: any): DownloadItemInput => {
   const input: DownloadItemInput = {
+    operationMode: operationMode.value,
     itemId: row.itemId,
     url: row.url || row.detailUrl || row.sourceUrl,
     title: row.title || row.url || '未命名资源',
@@ -402,26 +398,6 @@ const resourceToDownloadInput = (row: any): DownloadItemInput => {
   // Vue makes list rows and nested metadata reactive Proxies. Electron IPC can
   // only transfer structured-cloneable values, so strip all reactive wrappers.
   return JSON.parse(JSON.stringify(input)) as DownloadItemInput
-}
-
-const searchableText = (row: any): string => {
-  return [
-    row.title,
-    row.fileType,
-    row.size,
-    row.description,
-    row.category,
-    row.licenseType,
-    row.format,
-    row.duration,
-    row.downloadCount,
-    row.uploadTime,
-    row.author,
-    row.url,
-    row.detailUrl,
-    ...normalizeList(row.categoryPath),
-    ...normalizeList(row.tags)
-  ].filter(Boolean).join(' ').toLowerCase()
 }
 
 const normalizeList = (value: unknown): string[] => {
@@ -477,16 +453,21 @@ onUnmounted(() => {
         </el-input>
         <el-button :icon="Link" @click="pasteUrl">粘贴</el-button>
         <el-button :icon="Filter" @click="openAdvancedFilter">高级筛选</el-button>
-        <el-button type="primary" :icon="Search" @click="scrape(undefined, { force: true })" :loading="loading">
+        <el-button type="primary" :icon="Search" @click="scrape()" :loading="loading">
           抓取
         </el-button>
+        <el-select v-model="operationMode" aria-label="任务模式" style="width: 170px; flex-shrink: 0">
+          <el-option label="扣币并下载" value="download" />
+          <el-option label="仅扣币授权（不下载）" value="unlock" />
+        </el-select>
         <el-button
           :type="selected.length > 0 ? 'success' : 'info'"
           :icon="Download"
           :disabled="selected.length === 0"
           @click="downloadSelected"
-        >下载选中（{{ selected.length }}）</el-button>
+        >{{ operationLabel }}选中（{{ selected.length }}）</el-button>
       </div>
+      <div class="mode-hint">铜币下载确认自动处理；验证码会弹出原生窗口供你手动完成。“仅扣币授权”不会下载文件，免费资源不扣币。</div>
       <div class="quick-row">
         <div class="search-controls">
           <el-input
@@ -494,7 +475,7 @@ onUnmounted(() => {
             class="keyword-input"
             clearable
             :prefix-icon="Search"
-            placeholder="搜索资源：标题、标签、分类、格式"
+            placeholder="输入关键词，点击站内搜索"
             @keyup.enter="searchSite"
           />
           <el-button :icon="Search" @click="searchSite" :loading="loading">站内搜索</el-button>
@@ -516,10 +497,10 @@ onUnmounted(() => {
     </el-card>
 
     <el-card class="list-card" v-loading="loading" shadow="never">
-      <div v-if="filteredResources.length === 0 && !loading" class="empty-pane">
-        <el-empty :description="resources.length === 0 ? '暂无资源，请输入 URL 抓取' : '没有匹配的资源'">
+      <div v-if="resources.length === 0 && !loading" class="empty-pane">
+        <el-empty description="暂无资源，请输入 URL 抓取或调整网站筛选">
           <template #extra>
-            <el-button type="primary" :icon="Search" @click="scrape(undefined, { force: true })">抓取当前 URL</el-button>
+            <el-button type="primary" :icon="Search" @click="scrape()">抓取当前 URL</el-button>
             <el-button :icon="User" @click="openVerify">网页登录验证</el-button>
           </template>
         </el-empty>
@@ -527,7 +508,7 @@ onUnmounted(() => {
 
       <div v-else class="table-pane">
         <el-table
-          :data="filteredResources"
+          :data="resources"
           @selection-change="handleSelectionChange"
           @expand-change="handleExpandChange"
           height="100%"
@@ -616,16 +597,16 @@ onUnmounted(() => {
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="96" fixed="right">
+          <el-table-column label="操作" width="145" fixed="right">
             <template #default="{ row }">
-              <el-button size="small" type="primary" :icon="Download" @click="downloadOne(row)">下载</el-button>
+              <el-button size="small" type="primary" :icon="Download" @click="downloadOne(row)">{{ operationLabel }}</el-button>
             </template>
           </el-table-column>
         </el-table>
       </div>
       <div v-if="pageInfo" class="pagination-bar">
         <el-button :icon="ArrowLeft" :disabled="!pageInfo.previousUrl || loading" @click="goToPage(pageInfo.previousUrl)">上一页</el-button>
-        <span class="page-summary">第 {{ pageInfo.currentPage }} 页 · 本页 {{ resources.length }} 条<span v-if="keyword.trim()"> · 筛选后 {{ filteredResources.length }} 条</span></span>
+        <span class="page-summary">第 {{ pageInfo.currentPage }} 页<span v-if="pageInfo.totalPages"> / 共 {{ pageInfo.totalPages }} 页</span> · 本页 {{ resources.length }} 条</span>
         <el-button :icon="ArrowRight" :disabled="!pageInfo.nextUrl || loading" @click="goToPage(pageInfo.nextUrl)">下一页</el-button>
       </div>
     </el-card>
@@ -662,6 +643,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.mode-hint {
+  margin-top: 8px;
+  color: #909399;
+  font-size: 12px;
+}
 .browser-view {
   height: 100%;
   min-height: 0;

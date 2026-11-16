@@ -110,6 +110,10 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     return true
   })
 
+  ipcMain.handle('download:clearInactive', async () => {
+    return downloadQueue.clearInactive()
+  })
+
   // ===== 设置 =====
   ipcMain.handle('settings:get', async (_e, key: string) => {
     return getSetting(key)
@@ -117,6 +121,7 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle('settings:set', async (_e, key: string, value: string) => {
     setSetting(key, value)
+    applySettingToQueue(key, value)
     return true
   })
 
@@ -195,6 +200,28 @@ export function registerIpcHandlers(ipcMain: IpcMain): void {
     if (error) throw new Error(error)
     return true
   })
+}
+
+function applySettingToQueue(key: string, rawValue: string): void {
+  const num = Number(rawValue)
+  if (!Number.isFinite(num)) return
+  switch (key) {
+    case 'maxConcurrent':
+      downloadQueue.setMaxConcurrent(num)
+      break
+    case 'retryCount':
+      downloadQueue.setRetryLimit(num)
+      break
+    case 'retryDelay':
+      downloadQueue.setRetryDelay(num)
+      break
+    case 'requestDelay':
+      downloadQueue.setRequestDelay(num)
+      break
+    case 'hourlyLimit':
+      downloadQueue.setHourlyLimit(num)
+      break
+  }
 }
 
 function getHistoryEntry(id: number | string): HistoryEntry {

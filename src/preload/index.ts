@@ -37,6 +37,7 @@ const api = {
     resume: () => ipcRenderer.invoke('download:resume'),
     setConcurrent: (n: number) => ipcRenderer.invoke('download:setConcurrent', n),
     clearCompleted: () => ipcRenderer.invoke('download:clearCompleted'),
+    clearInactive: () => ipcRenderer.invoke('download:clearInactive'),
     onProgress: (callback: (data: any) => void) => {
       const handler = (_e: any, data: any) => callback(data)
       ipcRenderer.on('download:progress', handler)

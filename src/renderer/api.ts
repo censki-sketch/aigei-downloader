@@ -28,6 +28,7 @@ declare global {
         resume: () => Promise<boolean>
         setConcurrent: (n: number) => Promise<boolean>
         clearCompleted: () => Promise<boolean>
+        clearInactive: () => Promise<number>
         onProgress: (cb: (data: any) => void) => () => void
         onStatusChange: (cb: (data: any) => void) => () => void
         onQueueState: (cb: (data: any) => void) => () => void
@@ -57,4 +58,36 @@ declare global {
   }
 }
 
-export const api = window.aigei
+const bridge = window.aigei
+
+export const api = {
+  ...bridge,
+  download: {
+    ...bridge.download,
+    async clearInactive(): Promise<number> {
+      if (typeof bridge.download.clearInactive === 'function') {
+        try {
+          return await bridge.download.clearInactive()
+        } catch (error: any) {
+          // 开发热更新可能只更新了 preload，主进程尚未注册新通道。
+          if (!/No handler registered for ['"]download:clearInactive['"]/.test(String(error?.message || error))) {
+            throw error
+          }
+        }
+      }
+
+      // 渲染进程热更新不会替换已加载的 contextBridge；兼容旧窗口已有的接口。
+      // 先暂停调度，再重新读取任务，避免等待任务在逐条清除时开始执行。
+      const state = await bridge.download.getQueueState()
+      if (!state.paused) await bridge.download.pause()
+      try {
+        const tasks = await bridge.download.list()
+        const removable = tasks.filter((task: any) => task.status !== 'downloading')
+        for (const task of removable) await bridge.download.remove(task.id)
+        return removable.length
+      } finally {
+        if (!state.paused) await bridge.download.resume()
+      }
+    }
+  }
+}
